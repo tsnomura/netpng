@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/netpng-core",
+    "crates/pngcrop",
+    "crates/pngcat",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
