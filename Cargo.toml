@@ -17,6 +17,7 @@ members = [
     "crates/pngchroma",
     "crates/pngblur",
     "crates/pngview",
+    "crates/pngdecontaminate",
 ]
 
 [workspace.package]

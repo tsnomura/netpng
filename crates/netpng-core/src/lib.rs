@@ -483,6 +483,34 @@ pub fn chroma_key(img: &Image, background: [u8; 3], similarity: f64, blend: f64)
     }
 }
 
+/// Removes known-background color contamination ("spill") from
+/// partially-transparent edge pixels, e.g. after [`chroma_key`]. Assumes
+/// the observed color `C` is a blend `C = F*a + B*(1-a)` of the true
+/// foreground color `F` and `background` `B` weighted by the existing
+/// alpha `a`, and solves for `F`. Fully opaque/transparent pixels (where
+/// there's nothing to reconstruct, or the reconstruction is numerically
+/// meaningless) are left untouched.
+pub fn decontaminate(img: &Image, background: [u8; 3]) -> Image {
+    let mut pixels = img.pixels.clone();
+    for px in pixels.chunks_exact_mut(4) {
+        let a = px[3] as f64 / 255.0;
+        if a <= 0.0 || a >= 1.0 {
+            continue;
+        }
+        for c in 0..3 {
+            let observed = px[c] as f64;
+            let bg = background[c] as f64;
+            let f = (observed - bg * (1.0 - a)) / a;
+            px[c] = f.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    }
+}
+
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
 pub enum BlurChannels {
     All,
@@ -961,6 +989,36 @@ mod tests {
         };
         let out = chroma_key(&img, bg, 10.0, 30.0);
         assert_eq!(pixel_at(&out, 0, 0)[3], 128);
+    }
+
+    #[test]
+    fn decontaminate_recovers_foreground_color() {
+        // Pure red foreground at ~50% coverage over green background:
+        // observed = red*0.5 + green*0.5 = (128, 128, 0).
+        let bg = [0u8, 255, 0];
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![128, 128, 0, 128],
+        };
+        let out = decontaminate(&img, bg);
+        let px = pixel_at(&out, 0, 0);
+        assert!(px[0].abs_diff(255) <= 2, "R: {px:?}");
+        assert!(px[1] <= 3, "G: {px:?}");
+        assert!(px[2] <= 2, "B: {px:?}");
+        assert_eq!(px[3], 128, "alpha must be untouched");
+    }
+
+    #[test]
+    fn decontaminate_leaves_opaque_and_transparent_pixels_untouched() {
+        let bg = [0u8, 255, 0];
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![10, 20, 30, 255, 40, 50, 60, 0],
+        };
+        let out = decontaminate(&img, bg);
+        assert_eq!(out.pixels, img.pixels);
     }
 
     #[test]
