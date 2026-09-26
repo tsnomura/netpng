@@ -5,6 +5,7 @@ members = [
     "crates/pngcrop",
     "crates/pngcat",
     "crates/pngtrim",
+    "crates/pngcompose",
 ]
 
 [workspace.package]

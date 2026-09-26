@@ -39,6 +39,54 @@ pub fn crop(img: &Image, x: u32, y: u32, width: u32, height: u32) -> anyhow::Res
     Ok(Image { width, height, pixels })
 }
 
+/// Alpha-composites `overlay` onto `base` using the standard Porter-Duff
+/// "over" operator, placing the overlay's top-left corner at `(x, y)` on
+/// the base canvas. The result has `base`'s dimensions; any part of
+/// `overlay` that falls outside those bounds is clipped silently.
+pub fn composite_over(base: &Image, overlay: &Image, x: i32, y: i32) -> Image {
+    let mut pixels = base.pixels.clone();
+    for oy in 0..overlay.height {
+        let by = y + oy as i32;
+        if by < 0 || by >= base.height as i32 {
+            continue;
+        }
+        for ox in 0..overlay.width {
+            let bx = x + ox as i32;
+            if bx < 0 || bx >= base.width as i32 {
+                continue;
+            }
+            let src = pixel_at(overlay, ox, oy);
+            let idx = ((by as u32 * base.width + bx as u32) * 4) as usize;
+            let dst = [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]];
+            let blended = blend_over(src, dst);
+            pixels[idx..idx + 4].copy_from_slice(&blended);
+        }
+    }
+    Image {
+        width: base.width,
+        height: base.height,
+        pixels,
+    }
+}
+
+fn blend_over(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {
+    let sa = src[3] as f32 / 255.0;
+    let da = dst[3] as f32 / 255.0;
+    let oa = sa + da * (1.0 - sa);
+    if oa <= 0.0 {
+        return [0, 0, 0, 0];
+    }
+    let mut out = [0u8; 4];
+    for c in 0..3 {
+        let sc = src[c] as f32 / 255.0;
+        let dc = dst[c] as f32 / 255.0;
+        let oc = (sc * sa + dc * da * (1.0 - sa)) / oa;
+        out[c] = (oc * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    out[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
+    out
+}
+
 /// Parses a CLI color argument of the form `"R,G,B"` or `"R,G,B,A"` (each
 /// 0-255) into RGBA bytes. Shared by any tool that takes an explicit color
 /// on the command line (e.g. an explicit background for `pngtrim`).
@@ -234,5 +282,41 @@ mod tests {
         assert_eq!(decoded.width, img.width);
         assert_eq!(decoded.height, img.height);
         assert_eq!(decoded.pixels, img.pixels);
+    }
+
+    #[test]
+    fn composite_over_blends_half_alpha() {
+        let base = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255, 0, 0, 255], // opaque red
+        };
+        let overlay = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0, 255, 0, 128], // ~50% alpha green
+        };
+        let out = composite_over(&base, &overlay, 0, 0);
+        // Over opaque red, ~50% green should land near [127, 128, 0, 255].
+        for (got, expected) in out.pixels.iter().zip([127u8, 128, 0, 255].iter()) {
+            assert!(got.abs_diff(*expected) <= 1, "got {:?}", out.pixels);
+        }
+    }
+
+    #[test]
+    fn composite_over_clips_out_of_bounds_overlay() {
+        let base = Image {
+            width: 2,
+            height: 2,
+            pixels: vec![1, 2, 3, 255, 1, 2, 3, 255, 1, 2, 3, 255, 1, 2, 3, 255],
+        };
+        let overlay = Image {
+            width: 2,
+            height: 2,
+            pixels: vec![255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+        };
+        // Fully off-canvas: base must come back unchanged.
+        let out = composite_over(&base, &overlay, 10, 10);
+        assert_eq!(out.pixels, base.pixels);
     }
 }

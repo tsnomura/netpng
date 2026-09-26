@@ -490,6 +490,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pngcompose"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
 name = "pngcrop"
 version = "0.1.0"
 dependencies = [
