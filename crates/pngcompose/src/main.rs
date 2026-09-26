@@ -16,10 +16,10 @@ struct Args {
     #[arg(long, default_value = "-")]
     output: String,
     /// X offset of the overlay's top-left corner on the base canvas.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     x: i32,
     /// Y offset of the overlay's top-left corner on the base canvas.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     y: i32,
     #[arg(long, value_enum, default_value = "fast")]
     compression: CompressionLevel,

@@ -508,6 +508,78 @@ dependencies = [
 ]
 
 [[package]]
+name = "pngdist"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngflip"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pnginfo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pnginvert"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngnorm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngreduce"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngrotate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngscale"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
 name = "pngtrim"
 version = "0.1.0"
 dependencies = [

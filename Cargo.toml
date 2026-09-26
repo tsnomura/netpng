@@ -6,6 +6,14 @@ members = [
     "crates/pngcat",
     "crates/pngtrim",
     "crates/pngcompose",
+    "crates/pnginfo",
+    "crates/pnginvert",
+    "crates/pngflip",
+    "crates/pngrotate",
+    "crates/pngscale",
+    "crates/pngnorm",
+    "crates/pngdist",
+    "crates/pngreduce",
 ]
 
 [workspace.package]
