@@ -449,6 +449,122 @@ fn weighted_average(colors: &[([u8; 3], u64)]) -> [u8; 3] {
     [(sum[0] / total) as u8, (sum[1] / total) as u8, (sum[2] / total) as u8]
 }
 
+fn rgb_distance(px: &[u8], background: [u8; 3]) -> f64 {
+    let dr = px[0] as f64 - background[0] as f64;
+    let dg = px[1] as f64 - background[1] as f64;
+    let db = px[2] as f64 - background[2] as f64;
+    (dr * dr + dg * dg + db * db).sqrt()
+}
+
+/// Computes an alpha channel via chroma-key: pixels within `similarity` of
+/// `background` (RGB Euclidean distance) become transparent, pixels
+/// farther than `similarity + blend` stay fully opaque, and the distance
+/// range between the two ramps linearly — an anti-aliased edge instead of
+/// a hard cutoff. Existing alpha is preserved (multiplied in); RGB is left
+/// untouched (no spill/color decontamination).
+pub fn chroma_key(img: &Image, background: [u8; 3], similarity: f64, blend: f64) -> Image {
+    let mut pixels = img.pixels.clone();
+    for px in pixels.chunks_exact_mut(4) {
+        let dist = rgb_distance(px, background);
+        let key_alpha = if dist <= similarity {
+            0.0
+        } else if dist >= similarity + blend {
+            1.0
+        } else {
+            (dist - similarity) / blend
+        };
+        let existing_alpha = px[3] as f64 / 255.0;
+        px[3] = (key_alpha * existing_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    }
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+pub enum BlurChannels {
+    All,
+    Rgb,
+    Alpha,
+}
+
+fn gaussian_kernel(sigma: f64) -> Vec<f64> {
+    let radius = (sigma * 3.0).ceil().max(1.0) as i32;
+    let mut kernel: Vec<f64> = (-radius..=radius)
+        .map(|x| (-(x as f64 * x as f64) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let sum: f64 = kernel.iter().sum();
+    for v in kernel.iter_mut() {
+        *v /= sum;
+    }
+    kernel
+}
+
+/// Applies a separable Gaussian blur (edges clamped to the border pixel)
+/// to the selected `channels`. Selecting [`BlurChannels::Alpha`] feathers
+/// a mask (e.g. from [`chroma_key`]) without blurring its colors.
+pub fn blur(img: &Image, sigma: f64, channels: BlurChannels) -> anyhow::Result<Image> {
+    ensure!(sigma > 0.0, "sigma must be positive");
+    let kernel = gaussian_kernel(sigma);
+    let radius = (kernel.len() / 2) as i32;
+    let chans: &[usize] = match channels {
+        BlurChannels::All => &[0, 1, 2, 3],
+        BlurChannels::Rgb => &[0, 1, 2],
+        BlurChannels::Alpha => &[3],
+    };
+
+    let (w, h) = (img.width as i32, img.height as i32);
+    let src: Vec<f64> = img.pixels.iter().map(|&v| v as f64).collect();
+
+    let mut horiz = src.clone();
+    for y in 0..h {
+        for x in 0..w {
+            for &c in chans {
+                let mut acc = 0.0;
+                for (k, &wgt) in kernel.iter().enumerate() {
+                    let sx = (x + k as i32 - radius).clamp(0, w - 1);
+                    acc += wgt * src[((y * w + sx) * 4) as usize + c];
+                }
+                horiz[((y * w + x) * 4) as usize + c] = acc;
+            }
+        }
+    }
+
+    let mut vert = horiz.clone();
+    for y in 0..h {
+        for x in 0..w {
+            for &c in chans {
+                let mut acc = 0.0;
+                for (k, &wgt) in kernel.iter().enumerate() {
+                    let sy = (y + k as i32 - radius).clamp(0, h - 1);
+                    acc += wgt * horiz[((sy * w + x) * 4) as usize + c];
+                }
+                vert[((y * w + x) * 4) as usize + c] = acc;
+            }
+        }
+    }
+
+    let pixels: Vec<u8> = img
+        .pixels
+        .iter()
+        .enumerate()
+        .map(|(i, &orig)| {
+            if chans.contains(&(i % 4)) {
+                vert[i].round().clamp(0.0, 255.0) as u8
+            } else {
+                orig
+            }
+        })
+        .collect();
+    Ok(Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    })
+}
+
 /// Parses a CLI color argument of the form `"R,G,B"` or `"R,G,B,A"` (each
 /// 0-255) into RGBA bytes. Shared by any tool that takes an explicit color
 /// on the command line (e.g. an explicit background for `pngtrim`).
@@ -800,5 +916,80 @@ mod tests {
         let mut grays: Vec<u8> = out.pixels.chunks_exact(4).map(|p| p[0]).collect();
         grays.sort();
         assert_eq!(grays, vec![0, 255]);
+    }
+
+    #[test]
+    fn chroma_key_hits_endpoints() {
+        let bg = [0u8, 255, 0];
+        let at_bg = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0, 255, 0, 255],
+        };
+        assert_eq!(pixel_at(&chroma_key(&at_bg, bg, 10.0, 30.0), 0, 0)[3], 0);
+
+        let far = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255, 0, 0, 255],
+        };
+        assert_eq!(pixel_at(&chroma_key(&far, bg, 10.0, 30.0), 0, 0)[3], 255);
+    }
+
+    #[test]
+    fn chroma_key_ramps_linearly_in_transition_band() {
+        // Green shifted by (20,0,0) is RGB-distance 20 from pure green.
+        let bg = [0u8, 255, 0];
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![20, 255, 0, 255],
+        };
+        // similarity=10, blend=30: ramp covers distance 10..40; at dist=20
+        // that's 1/3 of the way, so alpha should land near 85.
+        let out = chroma_key(&img, bg, 10.0, 30.0);
+        assert!(pixel_at(&out, 0, 0)[3].abs_diff(85) <= 2);
+    }
+
+    #[test]
+    fn chroma_key_preserves_existing_alpha() {
+        let bg = [0u8, 255, 0];
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255, 0, 0, 128], // far from bg, but already half-transparent
+        };
+        let out = chroma_key(&img, bg, 10.0, 30.0);
+        assert_eq!(pixel_at(&out, 0, 0)[3], 128);
+    }
+
+    #[test]
+    fn blur_uniform_image_is_unchanged() {
+        let img = Image {
+            width: 5,
+            height: 5,
+            pixels: [gray(42); 25].concat(),
+        };
+        let out = blur(&img, 2.0, BlurChannels::All).unwrap();
+        for px in out.pixels.chunks_exact(4) {
+            assert_eq!(px, [42, 42, 42, 255]);
+        }
+    }
+
+    #[test]
+    fn blur_alpha_only_leaves_rgb_untouched() {
+        let mut pixels = vec![0u8; 5 * 4];
+        pixels[0] = 10; // R of first pixel
+        pixels[3] = 255; // A of first pixel
+        pixels[3 + 4] = 0; // A of second pixel is 0, rest default 0
+        let img = Image {
+            width: 5,
+            height: 1,
+            pixels,
+        };
+        let out = blur(&img, 1.0, BlurChannels::Alpha).unwrap();
+        assert_eq!(out.pixels[0], 10, "RGB must be untouched by alpha-only blur");
+        // Alpha should have spread from the single 255 pixel into its neighbor.
+        assert!(out.pixels[3 + 4] > 0, "alpha should have blurred into the neighbor");
     }
 }
