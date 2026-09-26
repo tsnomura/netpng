@@ -5,6 +5,18 @@ use netpng_core::{chroma_key, parse_color, pixel_at, read_image, write_image, Co
 /// plain binary cutout, the transition from opaque to transparent is a
 /// linear ramp over the "--similarity"-to-"--similarity + --blend" RGB
 /// distance range, giving an anti-aliased edge.
+///
+/// Tip: --blend needs to span roughly the full RGB distance between the
+/// background and whatever foreground colors sit right at its edge, or
+/// most genuinely-blended edge pixels get misclassified as fully opaque
+/// (and so never get partial alpha at all). A background close in hue to
+/// nearby foreground colors can use a narrow band (tens); a saturated
+/// green/blue screen against very different foreground colors (e.g. red)
+/// may need several hundred to capture the whole antialiasing gradient.
+/// If edges still look too hard-cut, widen --blend; if too much of the
+/// image fades out, narrow it (or raise --similarity). Pipe the result
+/// through pngdecontaminate with the same --background to remove the
+/// background color's tint from those partially transparent edge pixels.
 #[derive(Parser)]
 struct Args {
     /// Input path, "-" for stdin, or "clipboard".
@@ -20,6 +32,9 @@ struct Args {
     #[arg(long, default_value_t = 30.0)]
     similarity: f64,
     /// Width of the distance range over which alpha ramps from 0 to 255.
+    /// Widen this (e.g. to 200-300) when the background and foreground
+    /// colors are far apart in RGB space, or edge pixels will jump
+    /// straight from transparent to fully opaque instead of blending.
     #[arg(long, default_value_t = 30.0)]
     blend: f64,
     #[arg(long, value_enum, default_value = "fast")]
