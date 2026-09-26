@@ -12,6 +12,49 @@ pub struct Image {
     pub pixels: Vec<u8>,
 }
 
+/// Reads the RGBA value of a single pixel. Panics if `(x, y)` is out of bounds.
+pub fn pixel_at(img: &Image, x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * img.width + x) * 4) as usize;
+    [img.pixels[i], img.pixels[i + 1], img.pixels[i + 2], img.pixels[i + 3]]
+}
+
+/// Crops `img` to the rectangle `(x, y, width, height)`, shared by every
+/// tool that needs to cut out a sub-rectangle.
+pub fn crop(img: &Image, x: u32, y: u32, width: u32, height: u32) -> anyhow::Result<Image> {
+    ensure!(
+        x.checked_add(width).is_some_and(|r| r <= img.width)
+            && y.checked_add(height).is_some_and(|r| r <= img.height),
+        "crop rectangle ({x}, {y}, {width}x{height}) is out of bounds for a {}x{} image",
+        img.width,
+        img.height
+    );
+    let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+    for row in 0..height {
+        let src_start = (((y + row) * img.width + x) * 4) as usize;
+        let src_end = src_start + (width * 4) as usize;
+        let dst_start = (row * width * 4) as usize;
+        let dst_end = dst_start + (width * 4) as usize;
+        pixels[dst_start..dst_end].copy_from_slice(&img.pixels[src_start..src_end]);
+    }
+    Ok(Image { width, height, pixels })
+}
+
+/// Parses a CLI color argument of the form `"R,G,B"` or `"R,G,B,A"` (each
+/// 0-255) into RGBA bytes. Shared by any tool that takes an explicit color
+/// on the command line (e.g. an explicit background for `pngtrim`).
+pub fn parse_color(s: &str) -> anyhow::Result<[u8; 4]> {
+    let parts: Vec<&str> = s.split(',').collect();
+    ensure!(
+        parts.len() == 3 || parts.len() == 4,
+        "color must be \"R,G,B\" or \"R,G,B,A\" (0-255 each), got {s:?}"
+    );
+    let r: u8 = parts[0].trim().parse()?;
+    let g: u8 = parts[1].trim().parse()?;
+    let b: u8 = parts[2].trim().parse()?;
+    let a: u8 = if parts.len() == 4 { parts[3].trim().parse()? } else { 255 };
+    Ok([r, g, b, a])
+}
+
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
 pub enum CompressionLevel {
     Fast,

@@ -1,5 +1,5 @@
 use clap::Parser;
-use netpng_core::{read_image, write_image, CompressionLevel, Image};
+use netpng_core::{read_image, write_image, CompressionLevel};
 
 /// Crop a PNG image to a rectangle.
 #[derive(Parser)]
@@ -25,32 +25,6 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let img = read_image(&args.input)?;
-
-    anyhow::ensure!(
-        args.x.checked_add(args.width).is_some_and(|r| r <= img.width)
-            && args.y.checked_add(args.height).is_some_and(|r| r <= img.height),
-        "crop rectangle ({}, {}, {}x{}) is out of bounds for a {}x{} image",
-        args.x,
-        args.y,
-        args.width,
-        args.height,
-        img.width,
-        img.height
-    );
-
-    let mut pixels = vec![0u8; (args.width * args.height * 4) as usize];
-    for row in 0..args.height {
-        let src_start = (((args.y + row) * img.width + args.x) * 4) as usize;
-        let src_end = src_start + (args.width * 4) as usize;
-        let dst_start = (row * args.width * 4) as usize;
-        let dst_end = dst_start + (args.width * 4) as usize;
-        pixels[dst_start..dst_end].copy_from_slice(&img.pixels[src_start..src_end]);
-    }
-
-    let cropped = Image {
-        width: args.width,
-        height: args.height,
-        pixels,
-    };
+    let cropped = netpng_core::crop(&img, args.x, args.y, args.width, args.height)?;
     write_image(&args.output, &cropped, args.compression)
 }

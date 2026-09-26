@@ -4,6 +4,7 @@ members = [
     "crates/netpng-core",
     "crates/pngcrop",
     "crates/pngcat",
+    "crates/pngtrim",
 ]
 
 [workspace.package]
