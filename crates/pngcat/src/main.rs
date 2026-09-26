@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use netpng_core::{decode_rgba8, encode_rgba8, open_input, open_output, CompressionLevel, Image};
+use netpng_core::{read_image, write_image, CompressionLevel, Image};
 
 #[derive(Copy, Clone, ValueEnum)]
 enum Direction {
@@ -10,10 +10,10 @@ enum Direction {
 /// Concatenate PNG images side by side (horizontal) or stacked (vertical).
 #[derive(Parser)]
 struct Args {
-    /// Input path (repeatable, at least 2), or "-" for stdin (at most once).
+    /// Input path (repeatable, at least 2), "-" for stdin (at most once), or "clipboard".
     #[arg(long = "input", required = true)]
     inputs: Vec<String>,
-    /// Output path, or "-" for stdout.
+    /// Output path, "-" for stdout, or "clipboard".
     #[arg(long, default_value = "-")]
     output: String,
     #[arg(long, value_enum, default_value = "horizontal")]
@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
     let images: Vec<Image> = args
         .inputs
         .iter()
-        .map(|p| -> anyhow::Result<Image> { decode_rgba8(open_input(p)?) })
+        .map(|p| read_image(p))
         .collect::<anyhow::Result<_>>()?;
 
     let out = match args.direction {
@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
         Direction::Vertical => cat_vertical(&images)?,
     };
 
-    encode_rgba8(open_output(&args.output)?, &out, args.compression)
+    write_image(&args.output, &out, args.compression)
 }
 
 fn cat_horizontal(images: &[Image]) -> anyhow::Result<Image> {

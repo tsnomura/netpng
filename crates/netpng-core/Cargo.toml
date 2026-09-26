@@ -7,3 +7,4 @@ edition.workspace = true
 png = "0.18"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+arboard = "3.6"

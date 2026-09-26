@@ -1,13 +1,13 @@
 use clap::Parser;
-use netpng_core::{decode_rgba8, encode_rgba8, open_input, open_output, CompressionLevel, Image};
+use netpng_core::{read_image, write_image, CompressionLevel, Image};
 
 /// Crop a PNG image to a rectangle.
 #[derive(Parser)]
 struct Args {
-    /// Input path, or "-" for stdin.
+    /// Input path, "-" for stdin, or "clipboard".
     #[arg(long, default_value = "-")]
     input: String,
-    /// Output path, or "-" for stdout.
+    /// Output path, "-" for stdout, or "clipboard".
     #[arg(long, default_value = "-")]
     output: String,
     #[arg(long)]
@@ -24,7 +24,7 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let img = decode_rgba8(open_input(&args.input)?)?;
+    let img = read_image(&args.input)?;
 
     anyhow::ensure!(
         args.x.checked_add(args.width).is_some_and(|r| r <= img.width)
@@ -52,5 +52,5 @@ fn main() -> anyhow::Result<()> {
         height: args.height,
         pixels,
     };
-    encode_rgba8(open_output(&args.output)?, &cropped, args.compression)
+    write_image(&args.output, &cropped, args.compression)
 }

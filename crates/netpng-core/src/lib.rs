@@ -48,6 +48,48 @@ pub fn open_output(path: &str) -> anyhow::Result<Box<dyn Write>> {
     }
 }
 
+/// Reads an image from `path`: the literal `"clipboard"` reads whatever
+/// image is currently on the system clipboard, `"-"` reads a PNG stream
+/// from stdin, and anything else is read as a PNG file. This is the
+/// convention every netpng tool's `--input` should go through.
+pub fn read_image(path: &str) -> anyhow::Result<Image> {
+    if path == "clipboard" {
+        read_clipboard_image()
+    } else {
+        decode_rgba8(open_input(path)?)
+    }
+}
+
+/// Writes `img` to `path` under the same `"clipboard"` / `"-"` / file
+/// convention as [`read_image`].
+pub fn write_image(path: &str, img: &Image, level: CompressionLevel) -> anyhow::Result<()> {
+    if path == "clipboard" {
+        write_clipboard_image(img)
+    } else {
+        encode_rgba8(open_output(path)?, img, level)
+    }
+}
+
+fn read_clipboard_image() -> anyhow::Result<Image> {
+    let mut clipboard = arboard::Clipboard::new()?;
+    let data = clipboard.get_image()?;
+    Ok(Image {
+        width: u32::try_from(data.width)?,
+        height: u32::try_from(data.height)?,
+        pixels: data.bytes.into_owned(),
+    })
+}
+
+fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
+    let mut clipboard = arboard::Clipboard::new()?;
+    clipboard.set_image(arboard::ImageData {
+        width: img.width as usize,
+        height: img.height as usize,
+        bytes: std::borrow::Cow::Borrowed(&img.pixels),
+    })?;
+    Ok(())
+}
+
 pub fn decode_rgba8<R: Read>(mut r: R) -> anyhow::Result<Image> {
     // png::Decoder requires BufRead + Seek, which stdin/pipes don't offer.
     // Buffer the whole (single-image) input up front and decode from that.
