@@ -61,6 +61,24 @@ cargo build --workspace --release
 Binaries land in `target/release/`. Requires a Windows desktop session for
 `pngview` (it opens a native window); every other tool is headless.
 
+## Installing on PATH (Git Bash / MSYS / WSL)
+
+```
+./install.sh          # shims go to ~/bin by default
+./install.sh <dir>     # or somewhere else on PATH
+```
+
+This copies the real binaries to `~/.netpng/bin` and generates a small bash
+shim per tool (that just `exec`s the real binary) onto PATH. Two separate
+locations, on purpose: some endpoint-security products treat a brand-new,
+unrecognized *binary* sitting in a PATH directory as more suspect than the
+same binary elsewhere, or than a *script* run by an already-trusted
+interpreter (bash) — splitting "real binary, off PATH" from "thin shim
+script, on PATH" avoided a false-positive "unknown program" prompt that
+copying the binaries directly into a PATH directory reliably triggered
+during development. The shims only work from a bash-like shell; from
+PowerShell/cmd, call the `.exe` in `~/.netpng/bin` directly.
+
 ## Layout
 
 - `crates/netpng-core` — shared library: PNG decode/encode, the `Image`
