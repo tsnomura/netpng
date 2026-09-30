@@ -22,6 +22,12 @@ struct Args {
 
 const MIN_ZOOM: f64 = 0.05;
 const MAX_ZOOM: f64 = 32.0;
+/// Zoom multiplier per unit of scroll-wheel delta; smaller = gentler.
+const ZOOM_WHEEL_FACTOR: f64 = 1.01;
+/// Small images (icons, sprites, our own test fixtures...) would otherwise
+/// open in a window as tiny as the image itself; scale up so the window's
+/// larger side is at least this many pixels.
+const MIN_INITIAL_WINDOW: f64 = 400.0;
 /// Color for area outside the image canvas (panned/zoomed past its edge),
 /// distinct from the checkerboard used for transparent pixels *within* it.
 const OUTSIDE_CANVAS: u32 = 0x00303030;
@@ -40,10 +46,15 @@ where
          0 = reset, s = save, Esc/q = quit"
     );
 
+    let larger_side = (img.width.max(img.height) as f64).max(1.0);
+    let initial_zoom = (MIN_INITIAL_WINDOW / larger_side).max(1.0);
+    let initial_win_w = ((img.width as f64) * initial_zoom).round() as usize;
+    let initial_win_h = ((img.height as f64) * initial_zoom).round() as usize;
+
     let mut window = Window::new(
         "pngview",
-        img.width as usize,
-        img.height as usize,
+        initial_win_w,
+        initial_win_h,
         WindowOptions {
             resize: true,
             ..WindowOptions::default()
@@ -51,7 +62,7 @@ where
     )?;
     window.set_target_fps(60);
 
-    let mut zoom: f64 = 1.0;
+    let mut zoom: f64 = initial_zoom;
     let mut pan_x: f64 = 0.0;
     let mut pan_y: f64 = 0.0;
     let mut last_mouse: Option<(f32, f32)> = None;
@@ -64,7 +75,7 @@ where
         if let Some((_, wheel_dy)) = window.get_scroll_wheel() {
             if wheel_dy.abs() > f32::EPSILON {
                 let old_zoom = zoom;
-                zoom = (zoom * 1.1f64.powf(wheel_dy as f64)).clamp(MIN_ZOOM, MAX_ZOOM);
+                zoom = (zoom * ZOOM_WHEEL_FACTOR.powf(wheel_dy as f64)).clamp(MIN_ZOOM, MAX_ZOOM);
                 if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Clamp) {
                     // Keep the image point under the cursor fixed on screen.
                     let anchor_x = pan_x + mx as f64 / old_zoom;
