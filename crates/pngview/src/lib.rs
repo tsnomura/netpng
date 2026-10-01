@@ -12,12 +12,12 @@ use netpng_core::{read_image, write_image, CompressionLevel, Image};
 /// the clipboard; the window is resizable; Esc or "q" or closing the
 /// window exits.
 ///
-/// "c" is the practical way to get a result onto the clipboard on Linux:
-/// X11's clipboard only serves content for as long as the setting process
-/// stays alive, so a one-shot `--output clipboard` CLI call loses it the
-/// instant it exits. pngview is already long-lived (it runs until you
-/// close it), so copying from here keeps working for as long as the
-/// window stays open.
+/// "c" (or --copy-to-clipboard) is the practical way to get a result onto
+/// the clipboard on Linux: X11's clipboard only serves content for as long
+/// as the setting process stays alive, so a one-shot `--output clipboard`
+/// CLI call loses it the instant it exits. pngview is already long-lived
+/// (it runs until you close it, or --timeout elapses), so copying from
+/// here keeps working for as long as the window stays open.
 #[derive(Parser)]
 struct Args {
     /// Input path, "-" for stdin, or "clipboard".
@@ -26,6 +26,15 @@ struct Args {
     /// Zoom level Space cycles to as its first step (2.0 = 200%).
     #[arg(long, default_value_t = 2.0)]
     zoom: f64,
+    /// Copy the image to the clipboard on startup, as if "c" were pressed
+    /// immediately. Handy for scripting: e.g. pipe a result in with this
+    /// and --timeout so it flashes on screen, lands on the clipboard, and
+    /// closes itself.
+    #[arg(long)]
+    copy_to_clipboard: bool,
+    /// Close the window automatically after this many seconds.
+    #[arg(long)]
+    timeout: Option<f64>,
 }
 
 const MIN_ZOOM: f64 = 0.05;
@@ -70,13 +79,25 @@ where
     )?;
     window.set_target_fps(60);
 
+    if args.copy_to_clipboard {
+        match write_image("clipboard", &img, CompressionLevel::Default) {
+            Ok(()) => eprintln!("pngview: copied to clipboard"),
+            Err(e) => eprintln!("pngview: failed to copy to clipboard: {e}"),
+        }
+    }
+
     let mut zoom: f64 = initial_zoom;
     let mut pan_x: f64 = 0.0;
     let mut pan_y: f64 = 0.0;
     let mut last_mouse: Option<(f32, f32)> = None;
     let mut zoom_cycle: u8 = 0;
+    let start = std::time::Instant::now();
 
-    while window.is_open() && !window.is_key_down(Key::Escape) && !window.is_key_down(Key::Q) {
+    while window.is_open()
+        && !window.is_key_down(Key::Escape)
+        && !window.is_key_down(Key::Q)
+        && !args.timeout.is_some_and(|t| start.elapsed().as_secs_f64() >= t)
+    {
         let (win_w, win_h) = window.get_size();
         let (win_w, win_h) = (win_w.max(1), win_h.max(1));
 
