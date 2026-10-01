@@ -716,6 +716,7 @@ fn read_clipboard_image() -> anyhow::Result<Image> {
     })
 }
 
+#[cfg(not(target_os = "linux"))]
 fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
     let mut clipboard = arboard::Clipboard::new()?;
     clipboard.set_image(arboard::ImageData {
@@ -723,6 +724,39 @@ fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
         height: img.height as usize,
         bytes: std::borrow::Cow::Borrowed(&img.pixels),
     })?;
+    Ok(())
+}
+
+/// X11/Wayland only serve clipboard content for as long as the setting
+/// side keeps actively responding to selection requests; a plain
+/// `set_image` call loses the content the instant it returns, regardless
+/// of whether the calling *process* is still alive. `arboard`'s `wait()`
+/// keeps responding, but it blocks the calling thread until something else
+/// takes the clipboard (or forever) -- so it's run on a detached thread
+/// here rather than the caller's, which would otherwise freeze (e.g. a
+/// GUI event loop). That thread, and so the clipboard content, naturally
+/// goes away when this process exits.
+#[cfg(target_os = "linux")]
+fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
+    use arboard::SetExtLinux;
+
+    let width = img.width as usize;
+    let height = img.height as usize;
+    let bytes = img.pixels.clone();
+    std::thread::spawn(move || {
+        let result = (|| -> anyhow::Result<()> {
+            let mut clipboard = arboard::Clipboard::new()?;
+            clipboard.set().wait().image(arboard::ImageData {
+                width,
+                height,
+                bytes: std::borrow::Cow::Owned(bytes),
+            })?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            eprintln!("netpng: clipboard-serving thread failed: {e}");
+        }
+    });
     Ok(())
 }
 
