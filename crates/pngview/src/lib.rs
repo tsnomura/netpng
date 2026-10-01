@@ -8,8 +8,16 @@ use netpng_core::{read_image, write_image, CompressionLevel, Image};
 /// Controls: mouse wheel zooms (centered on the cursor); left-click-drag
 /// pans; Space cycles zoom between --zoom, actual size (100%), and fit-to-
 /// window; Enter re-centers the image; "0" resets zoom/pan; "s" saves the
-/// image to a timestamped PNG in the current directory; the window is
-/// resizable; Esc or "q" or closing the window exits.
+/// image to a timestamped PNG in the current directory; "c" copies it to
+/// the clipboard; the window is resizable; Esc or "q" or closing the
+/// window exits.
+///
+/// "c" is the practical way to get a result onto the clipboard on Linux:
+/// X11's clipboard only serves content for as long as the setting process
+/// stays alive, so a one-shot `--output clipboard` CLI call loses it the
+/// instant it exits. pngview is already long-lived (it runs until you
+/// close it), so copying from here keeps working for as long as the
+/// window stays open.
 #[derive(Parser)]
 struct Args {
     /// Input path, "-" for stdin, or "clipboard".
@@ -43,7 +51,7 @@ where
 
     eprintln!(
         "pngview: wheel = zoom, left-drag = pan, space = cycle zoom, enter = center, \
-         0 = reset, s = save, Esc/q = quit"
+         0 = reset, s = save, c = copy to clipboard, Esc/q = quit"
     );
 
     let larger_side = (img.width.max(img.height) as f64).max(1.0);
@@ -125,6 +133,13 @@ where
             match write_image(&path.to_string_lossy(), &img, CompressionLevel::Default) {
                 Ok(()) => eprintln!("pngview: saved to {}", path.display()),
                 Err(e) => eprintln!("pngview: failed to save: {e}"),
+            }
+        }
+
+        if window.is_key_pressed(Key::C, KeyRepeat::No) {
+            match write_image("clipboard", &img, CompressionLevel::Default) {
+                Ok(()) => eprintln!("pngview: copied to clipboard"),
+                Err(e) => eprintln!("pngview: failed to copy to clipboard: {e}"),
             }
         }
 
