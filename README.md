@@ -64,10 +64,13 @@ fit in the table above.
 cargo build --workspace --release
 ```
 
-Binaries land in `target/release/`. Requires a Windows desktop session for
-`pngview` (it opens a native window); every other tool is headless.
+Binaries land in `target/release/`. `pngview` opens a native window, so it
+needs a real display session (Windows, macOS, or a Linux X11 session); it
+cannot run headless, and on Linux it uses X11 (not Wayland). Its
+`--input clipboard` / `--copy-to-clipboard` / "c" work on all of those via
+the system clipboard. Every other tool is headless.
 
-## Installing on PATH (Git Bash / MSYS / WSL)
+## Installing on PATH (bash-like shells: Git Bash / MSYS / WSL / Linux / macOS)
 
 ```
 ./install.sh          # shims go to ~/bin by default
