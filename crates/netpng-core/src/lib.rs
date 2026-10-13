@@ -1,11 +1,12 @@
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 
-use anyhow::{bail, ensure};
+use anyhow::{bail, ensure, Context};
 
 /// An image decoded into 8-bit RGBA, regardless of the source PNG's
 /// original color type or bit depth. This is the common currency every
 /// netpng tool passes between decode and encode.
+#[derive(Clone)]
 pub struct Image {
     pub width: u32,
     pub height: u32,
@@ -839,6 +840,364 @@ fn to_rgba8(bytes: &[u8], color_type: png::ColorType, width: u32, height: u32) -
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// JPEG bridge codec (lossy), shared by jpg2png and png2jpg
+// ---------------------------------------------------------------------------
+
+/// Decodes a JPEG from `path` (a file, or `"-"` for stdin) into RGBA8.
+pub fn read_jpeg(path: &str) -> anyhow::Result<Image> {
+    let mut bytes = Vec::new();
+    open_input(path)?
+        .read_to_end(&mut bytes)
+        .context("reading JPEG input")?;
+    let rgba = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+        .map_err(|e| anyhow::anyhow!("input is not a JPEG: {e}"))?
+        .to_rgba8();
+    Ok(Image {
+        width: rgba.width(),
+        height: rgba.height(),
+        pixels: rgba.into_raw(),
+    })
+}
+
+/// Composites `img` (straight alpha) over an opaque `background` and returns
+/// the RGB bytes, since JPEG has no alpha channel.
+fn flatten_alpha(img: &Image, background: [u8; 3]) -> Vec<u8> {
+    let mut out = vec![0u8; (img.width as usize) * (img.height as usize) * 3];
+    for (o, px) in out.chunks_exact_mut(3).zip(img.pixels.chunks_exact(4)) {
+        let a = px[3] as f32 / 255.0;
+        for c in 0..3 {
+            let blended = px[c] as f32 * a + background[c] as f32 * (1.0 - a);
+            o[c] = blended.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
+}
+
+/// Encodes `img` as a baseline JPEG (RGB, no alpha channel): the alpha
+/// channel is first flattened onto `background`. `quality` is 1 (worst) to
+/// 100 (best).
+fn encode_jpeg(img: &Image, background: [u8; 3], quality: u8) -> anyhow::Result<Vec<u8>> {
+    let rgb = flatten_alpha(img, background);
+    let mut out = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
+    encoder
+        .encode(&rgb, img.width, img.height, image::ExtendedColorType::Rgb8)
+        .map_err(|e| anyhow::anyhow!("failed to encode JPEG: {e}"))?;
+    Ok(out)
+}
+
+/// Flattens `img`'s alpha onto `background` and writes the result to `path`
+/// as a baseline JPEG at `quality` (1 = worst, 100 = best).
+pub fn write_jpeg(
+    path: &str,
+    img: &Image,
+    background: [u8; 3],
+    quality: u8,
+) -> anyhow::Result<()> {
+    let bytes = encode_jpeg(img, background, quality)?;
+    let mut w = open_output(path)?;
+    w.write_all(&bytes)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ICO bridge codec, shared by ico2png and png2ico
+// ---------------------------------------------------------------------------
+
+fn read_u16_le(b: &[u8], i: usize) -> u16 {
+    u16::from_le_bytes([b[i], b[i + 1]])
+}
+
+fn read_u32_le(b: &[u8], i: usize) -> u32 {
+    u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
+}
+
+/// Parses the ICO header/directory into a list of
+/// `(width, height, data_offset, data_len)` for each stored image.
+fn ico_directory(bytes: &[u8]) -> anyhow::Result<Vec<(u32, u32, usize, usize)>> {
+    ensure!(bytes.len() >= 6, "not an ICO: too small for header");
+    let kind = read_u16_le(bytes, 2);
+    ensure!(kind == 1 || kind == 2, "not an ICO file (type {kind})");
+    let count = read_u16_le(bytes, 4) as usize;
+    ensure!(count >= 1, "ICO contains no images");
+    ensure!(bytes.len() >= 6 + count * 16, "ICO directory truncated");
+
+    let mut entries = Vec::new();
+    for i in 0..count {
+        let o = 6 + i * 16;
+        // A width/height of 0 in the directory means 256.
+        let w = match bytes[o] { 0 => 256, v => v as u32 };
+        let h = match bytes[o + 1] { 0 => 256, v => v as u32 };
+        let data_len = read_u32_le(bytes, o + 8) as usize;
+        let data_offset = read_u32_le(bytes, o + 12) as usize;
+        ensure!(
+            data_offset + data_len <= bytes.len(),
+            "ICO image data runs past end of file"
+        );
+        entries.push((w, h, data_offset, data_len));
+    }
+    Ok(entries)
+}
+
+const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// Decodes one raw ICO image entry (the bytes that follow its 16-byte
+/// directory record) into RGBA8. Entries are either a PNG (Vista+) or a BMP
+/// DIB; both are handled.
+fn decode_ico_image(data: &[u8]) -> anyhow::Result<Image> {
+    if data.len() >= 8 && data[..8] == PNG_MAGIC {
+        return decode_rgba8(io::Cursor::new(data));
+    }
+    decode_bmp_dib(data)
+}
+
+/// Decodes a BMP DIB (BITMAPINFOHEADER + bottom-up XOR mask + 1bpp AND mask)
+/// as stored inside an ICO, into RGBA8. Supports 32/24/8 bpp.
+fn decode_bmp_dib(data: &[u8]) -> anyhow::Result<Image> {
+    ensure!(data.len() >= 40, "not an ICO: BMP DIB too small for header");
+    let bi_size = read_u32_le(data, 0);
+    ensure!(bi_size >= 40, "unsupported ICO BMP header size {bi_size}");
+    let width = i32::from_le_bytes([data[4], data[5], data[6], data[7]]) as u32;
+    // In an ICO, biHeight is twice the real height (XOR mask + AND mask).
+    let bi_height = i32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+    let height = (bi_height / 2) as u32;
+    let bit_count = read_u16_le(data, 14);
+    let compression = read_u32_le(data, 16);
+    ensure!(compression == 0, "ICO BMP DIB uses unsupported compression {compression}");
+    ensure!(width > 0 && height > 0, "ICO BMP DIB has invalid dimensions");
+
+    let xor_row_bytes = ((width as usize * bit_count as usize + 31) / 32) * 4;
+    let xor_bytes = xor_row_bytes * height as usize;
+    let and_row_bytes = ((width as usize + 31) / 32) * 4;
+    let and_bytes = and_row_bytes * height as usize;
+
+    let palette_count = if bit_count <= 8 { 1 << bit_count } else { 0 };
+    let palette_bytes = palette_count * 4;
+    let xor_start = 40 + palette_bytes;
+    ensure!(
+        xor_start + xor_bytes + and_bytes <= data.len(),
+        "ICO BMP DIB pixel data truncated"
+    );
+
+    // Palette (8bpp) is an array of BGRA quadruples right after the header.
+    let mut palette: Vec<[u8; 4]> = Vec::new();
+    for i in 0..palette_count {
+        let o = 40 + i * 4;
+        palette.push([data[o + 2], data[o + 1], data[o], 255]); // BGRA -> RGBA
+    }
+
+    let and = &data[xor_start + xor_bytes..xor_start + xor_bytes + and_bytes];
+    let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+    for y in 0..height {
+        // Bottom-up: the first row in the file is the image's bottom row.
+        let file_row = (height - 1 - y) as usize;
+        let xor_row = &data
+            [xor_start + file_row * xor_row_bytes..xor_start + (file_row + 1) * xor_row_bytes];
+        let and_row = &and[file_row * and_row_bytes..file_row * and_row_bytes + and_row_bytes];
+        for x in 0..width {
+            let (r, g, b, a) = match bit_count {
+                32 => {
+                    let o = (x * 4) as usize;
+                    (xor_row[o + 2], xor_row[o + 1], xor_row[o], xor_row[o + 3])
+                }
+                24 => {
+                    let o = (x * 3) as usize;
+                    let a = if (and_row[x as usize / 8] >> (x % 8)) & 1 == 1 { 0 } else { 255 };
+                    (xor_row[o + 2], xor_row[o + 1], xor_row[o], a)
+                }
+                8 => {
+                    let a = if (and_row[x as usize / 8] >> (x % 8)) & 1 == 1 { 0 } else { 255 };
+                    let [r, g, b, _] = palette[xor_row[x as usize] as usize];
+                    (r, g, b, a)
+                }
+                other => bail!("unsupported ICO BMP bit depth {other}"),
+            };
+            let p = ((y * width + x) * 4) as usize;
+            pixels[p] = r;
+            pixels[p + 1] = g;
+            pixels[p + 2] = b;
+            pixels[p + 3] = a;
+        }
+    }
+    Ok(Image {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// Lists the `(width, height)` of each image stored in the ICO at `path`.
+pub fn ico_sizes(path: &str) -> anyhow::Result<Vec<(u32, u32)>> {
+    let mut bytes = Vec::new();
+    open_input(path)?.read_to_end(&mut bytes)?;
+    Ok(ico_directory(&bytes)?
+        .into_iter()
+        .map(|(w, h, _, _)| (w, h))
+        .collect())
+}
+
+/// Reads one image from the ICO at `path` into RGBA8. When `target` is
+/// `None` the largest image (by area) is used; otherwise the entry whose
+/// width is closest to `target` is chosen.
+pub fn read_ico(path: &str, target: Option<u32>) -> anyhow::Result<Image> {
+    let mut bytes = Vec::new();
+    open_input(path)?.read_to_end(&mut bytes)?;
+    let entries = ico_directory(&bytes)?;
+    let idx = match target {
+        None => entries
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, (w, h, _, _))| w.saturating_mul(*h))
+            .map(|(i, _)| i)
+            .ok_or_else(|| anyhow::anyhow!("ICO contains no images"))?,
+        Some(t) => entries
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (w, _, _, _))| w.abs_diff(t))
+            .map(|(i, _)| i)
+            .ok_or_else(|| anyhow::anyhow!("ICO contains no images"))?,
+    };
+    let (_, _, data_offset, data_len) = entries[idx];
+    decode_ico_image(&bytes[data_offset..data_offset + data_len])
+}
+
+/// Scales `img` so it fits inside a `size` x `size` square (aspect ratio
+/// preserved, bilinear) and centers it on a transparent canvas.
+fn fit_into_square(img: &Image, size: u32) -> Image {
+    let (iw, ih) = (img.width as f64, img.height as f64);
+    let f = (size as f64 / iw).min(size as f64 / ih);
+    let nw = (iw * f).round().max(1.0) as u32;
+    let nh = (ih * f).round().max(1.0) as u32;
+    let scaled = if nw == img.width && nh == img.height {
+        img.clone()
+    } else {
+        scale(img, nw, nh)
+    };
+    let mut out = Image {
+        width: size,
+        height: size,
+        pixels: vec![0u8; (size as usize) * (size as usize) * 4],
+    };
+    let ox = (size - nw) / 2;
+    let oy = (size - nh) / 2;
+    for y in 0..nh {
+        let src = (y * nw * 4) as usize;
+        let dst = (((oy + y) * size + ox) * 4) as usize;
+        out.pixels[dst..dst + (nw * 4) as usize]
+            .copy_from_slice(&scaled.pixels[src..src + (nw * 4) as usize]);
+    }
+    out
+}
+
+/// Encodes `img` (RGBA8) as a BMP DIB (BITMAPINFOHEADER + bottom-up BGRA XOR
+/// mask + 1bpp AND mask) as stored inside an ICO.
+fn encode_bmp_dib(img: &Image) -> Vec<u8> {
+    let (w, h) = (img.width, img.height);
+    let xor_row_bytes = w as usize * 4; // 32bpp, already 4-byte aligned
+    let xor_bytes = xor_row_bytes * h as usize;
+    let and_row_bytes = ((w as usize + 31) / 32) * 4;
+    let and_bytes = and_row_bytes * h as usize;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    out.extend_from_slice(&(w as i32).to_le_bytes()); // biWidth
+    out.extend_from_slice(&((h as i32) * 2).to_le_bytes()); // biHeight = XOR + AND
+    out.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    out.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    out.extend_from_slice(&0u32.to_le_bytes()); // biCompression = BI_RGB
+    out.extend_from_slice(&((xor_bytes + and_bytes) as u32).to_le_bytes()); // biSizeImage
+    out.extend_from_slice(&0i32.to_le_bytes()); // biXPelsPerMeter
+    out.extend_from_slice(&0i32.to_le_bytes()); // biYPelsPerMeter
+    out.extend_from_slice(&0u32.to_le_bytes()); // biClrUsed
+    out.extend_from_slice(&0u32.to_le_bytes()); // biClrImportant
+
+    // XOR mask: bottom-up BGRA.
+    for y in (0..h).rev() {
+        for x in 0..w {
+            let p = ((y * w + x) * 4) as usize;
+            out.push(img.pixels[p + 2]); // B
+            out.push(img.pixels[p + 1]); // G
+            out.push(img.pixels[p]); // R
+            out.push(img.pixels[p + 3]); // A
+        }
+    }
+
+    // AND mask: bottom-up 1bpp, bit set where fully transparent.
+    for y in (0..h).rev() {
+        for byte_i in 0..and_row_bytes {
+            let mut byte = 0u8;
+            for bit in 0..8 {
+                let x = (byte_i * 8 + bit) as u32;
+                if x < w && img.pixels[((y * w + x) * 4 + 3) as usize] == 0 {
+                    byte |= 1 << bit;
+                }
+            }
+            out.push(byte);
+        }
+    }
+    out
+}
+
+/// Builds an ICO in memory with one entry per size in `sizes`. Each entry is
+/// `img` scaled to fit that square; sizes below 256 are stored as 32bpp BMP
+/// DIBs and 256 as a PNG (readable by Vista+).
+fn encode_ico(img: &Image, sizes: &[u32]) -> anyhow::Result<Vec<u8>> {
+    ensure!(!sizes.is_empty(), "no output sizes given");
+    for &s in sizes {
+        ensure!(s >= 1 && s <= 256, "ICO size {s} out of range 1-256");
+    }
+    let mut sizes: Vec<u32> = sizes.iter().copied().collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+
+    let mut encoded: Vec<(u32, Vec<u8>)> = Vec::new();
+    for &s in &sizes {
+        let fitted = fit_into_square(img, s);
+        let bytes = if s == 256 {
+            let mut png = Vec::new();
+            encode_rgba8(&mut png, &fitted, CompressionLevel::Default)?;
+            png
+        } else {
+            encode_bmp_dib(&fitted)
+        };
+        encoded.push((s, bytes));
+    }
+
+    let count = encoded.len() as u16;
+    let dir_size = 6 + encoded.len() * 16;
+    let mut offset = dir_size;
+    let mut out = Vec::new();
+    out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    out.extend_from_slice(&1u16.to_le_bytes()); // type = icon
+    out.extend_from_slice(&count.to_le_bytes());
+    for (s, bytes) in &encoded {
+        // Directory width/height of 0 means 256.
+        let dim = if *s == 256 { 0 } else { *s as u8 };
+        out.push(dim);
+        out.push(dim);
+        out.push(0); // color count
+        out.push(0); // reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bit count
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += bytes.len();
+    }
+    for (_, bytes) in &encoded {
+        out.extend_from_slice(bytes);
+    }
+    Ok(out)
+}
+
+/// Writes `img` to `path` as an ICO with one entry per size in `sizes`.
+pub fn write_ico(path: &str, img: &Image, sizes: &[u32]) -> anyhow::Result<()> {
+    let bytes = encode_ico(img, sizes)?;
+    let mut w = open_output(path)?;
+    w.write_all(&bytes)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1083,5 +1442,125 @@ mod tests {
         assert_eq!(out.pixels[0], 10, "RGB must be untouched by alpha-only blur");
         // Alpha should have spread from the single 255 pixel into its neighbor.
         assert!(out.pixels[3 + 4] > 0, "alpha should have blurred into the neighbor");
+    }
+
+    #[test]
+    fn jpeg_round_trip_flat_color_is_close() {
+        let img = Image {
+            width: 16,
+            height: 16,
+            pixels: vec![200, 120, 40, 255].repeat(16 * 16),
+        };
+        let bytes = encode_jpeg(&img, [255; 3], 95).unwrap();
+        let rgba = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!((rgba.width(), rgba.height()), (16, 16));
+        for px in rgba.pixels() {
+            assert!((px[0] as i32 - 200).abs() <= 8, "R: {px:?}");
+            assert!((px[1] as i32 - 120).abs() <= 8, "G: {px:?}");
+            assert!((px[2] as i32 - 40).abs() <= 8, "B: {px:?}");
+            assert_eq!(px[3], 255);
+        }
+    }
+
+    #[test]
+    fn jpeg_encode_flattens_alpha_onto_background() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![255, 0, 0, 128], // ~50% red
+        };
+        let rgb = flatten_alpha(&img, [0, 0, 255]);
+        for (got, want) in rgb.iter().zip([128u8, 0, 127].iter()) {
+            assert!(got.abs_diff(*want) <= 1, "got {rgb:?}");
+        }
+    }
+
+    #[test]
+    fn ico_bmp32_round_trip_is_lossless() {
+        let mut pixels = Vec::new();
+        for y in 0..32u32 {
+            for x in 0..32u32 {
+                pixels.extend_from_slice(&[x as u8, y as u8, 128, 255 - ((x + y) % 256) as u8]);
+            }
+        }
+        let img = Image {
+            width: 32,
+            height: 32,
+            pixels,
+        };
+        let bytes = encode_ico(&img, &[32]).unwrap();
+        let entries = ico_directory(&bytes).unwrap();
+        assert_eq!(entries.len(), 1);
+        let (w, h, off, len) = entries[0];
+        assert_eq!((w, h), (32, 32));
+        let decoded = decode_ico_image(&bytes[off..off + len]).unwrap();
+        assert_eq!(decoded.width, 32);
+        assert_eq!(decoded.height, 32);
+        assert_eq!(decoded.pixels, img.pixels);
+    }
+
+    #[test]
+    fn ico_256_entry_is_png_compressed() {
+        let img = Image {
+            width: 256,
+            height: 256,
+            pixels: vec![10, 20, 30, 255].repeat(256 * 256),
+        };
+        let bytes = encode_ico(&img, &[256]).unwrap();
+        let (w, h, off, len) = ico_directory(&bytes).unwrap()[0];
+        assert_eq!((w, h), (256, 256));
+        let data = &bytes[off..off + len];
+        assert_eq!(&data[..8], &PNG_MAGIC, "256px entry must be PNG-compressed");
+        let decoded = decode_ico_image(data).unwrap();
+        assert_eq!(decoded.pixels, img.pixels);
+    }
+
+    #[test]
+    fn ico_non_square_source_is_centered_on_transparent_square() {
+        let img = Image {
+            width: 4,
+            height: 2,
+            pixels: vec![7, 7, 7, 255].repeat(8),
+        };
+        let bytes = encode_ico(&img, &[4]).unwrap();
+        let (w, h, off, len) = ico_directory(&bytes).unwrap()[0];
+        assert_eq!((w, h), (4, 4));
+        let decoded = decode_ico_image(&bytes[off..off + len]).unwrap();
+        assert_eq!(pixel_at(&decoded, 0, 0)[3], 0, "top padding row must be transparent");
+        assert_eq!(pixel_at(&decoded, 0, 1), [7, 7, 7, 255]);
+        assert_eq!(pixel_at(&decoded, 0, 2), [7, 7, 7, 255]);
+        assert_eq!(pixel_at(&decoded, 0, 3)[3], 0, "bottom padding row must be transparent");
+    }
+
+    #[test]
+    fn read_ico_picks_largest_by_default_and_nearest_for_target() {
+        let img = Image {
+            width: 64,
+            height: 64,
+            pixels: vec![42, 42, 42, 255].repeat(64 * 64),
+        };
+        let dir = std::env::temp_dir().join(format!("netpng-ico-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("multi.ico");
+        let p = path.to_str().unwrap();
+        write_ico(p, &img, &[16, 48, 32]).unwrap();
+        let largest = read_ico(p, None).unwrap();
+        assert_eq!((largest.width, largest.height), (48, 48));
+        let nearest = read_ico(p, Some(20)).unwrap();
+        assert_eq!((nearest.width, nearest.height), (16, 16));
+        let exact = read_ico(p, Some(32)).unwrap();
+        assert_eq!((exact.width, exact.height), (32, 32));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ico_directory_rejects_garbage() {
+        assert!(ico_directory(&[0u8; 4]).is_err(), "too small");
+        assert!(ico_directory(&[0, 0, 3, 0, 0, 0]).is_err(), "wrong file type");
+        assert!(ico_directory(&[0, 0, 1, 0, 0, 0]).is_err(), "zero entries");
+        // Two entries advertised, but no room for the directory records.
+        assert!(ico_directory(&[0, 0, 1, 0, 2, 0, 1, 1, 0, 0, 0, 0]).is_err());
     }
 }

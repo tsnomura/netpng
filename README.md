@@ -13,10 +13,12 @@ pngchroma --input photo.png --background 0,255,0 --blend 200 \
 
 ## Design
 
-- **PNG only.** No other image format in, no other format out. `--compression
-  fast|default|best` controls PNG compression level explicitly — there's no
-  auto-detection of "am I in a pipe or writing a file", since that would make
-  a tool's output depend on how it's invoked.
+- **PNG only** for the processing tools: no other image format in, no
+  other format out. The four converters (`jpg2png`, `png2jpg`, `ico2png`,
+  `png2ico`) are the exception, in the spirit of netpbm's `jpegtopnm` and
+  `pnmtojpeg`. `--compression fast|default|best` controls PNG compression
+  level explicitly — there's no auto-detection of "am I in a pipe or writing
+  a file", since that would make a tool's output depend on how it's invoked.
 - **One job per tool.** No tool takes a chain of operations; if you want crop
   then rotate then compose, that's three tools in a pipe.
 - **Uniform `--input`/`--output` convention**, shared by every tool:
@@ -47,6 +49,10 @@ pngchroma --input photo.png --background 0,255,0 --blend 200 \
 | `pngdecontaminate` | — | Remove background-color spill from an already-keyed image's edge pixels |
 | `pngblur` | — | Gaussian blur; `--channels alpha` feathers a mask without touching its colors |
 | `pngview` | — | Display an image in a window; reads from a pipe, a file, or the clipboard |
+| `jpg2png` | jpegtopnm | Convert a JPEG to PNG (the JPEG is already lossy) |
+| `png2jpg` | pnmtojpeg | Flatten alpha onto `--background` (default white) and encode as baseline JPEG at `--quality` |
+| `ico2png` | — | Extract one size from an ICO as PNG (default largest; `--size` picks the closest) |
+| `png2ico` | — | Pack an image into an ICO, one entry per size (default `16,32,48,256`) |
 
 Run any tool with `--help` for its full flags — most of the color/geometry
 ones (`pngtrim`, `pngchroma`, `pngrotate`, `pngcompose`) have more knobs than
@@ -81,8 +87,8 @@ PowerShell/cmd, call the `.exe` in `~/.netpng/bin` directly.
 
 ## Layout
 
-- `crates/netpng-core` — shared library: PNG decode/encode, the `Image`
-  type, and every tool's actual image-processing logic (`crop`, `rotate`,
-  `chroma_key`, `quantize`, ...)
-- `crates/png*` — one thin CLI binary crate per tool, each just parsing
+- `crates/netpng-core` — shared library: PNG decode/encode, JPEG/ICO bridge
+  codecs, the `Image` type, and every tool's actual image-processing logic
+  (`crop`, `rotate`, `chroma_key`, `quantize`, ...)
+- `crates/<tool>` — one thin CLI binary crate per tool, each just parsing
   flags and calling into `netpng-core`
