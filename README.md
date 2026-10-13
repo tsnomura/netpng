@@ -64,9 +64,15 @@ fit in the table above.
 cargo build --workspace --release
 ```
 
-Binaries land in `target/release/`. `pngview` opens a native window, so it
+Binaries land in `target/release/`. `pngview` opens a native window via
+`winit` + `softbuffer` (software rendering — no GPU/OpenGL needed), so it
 needs a real display session (Windows, macOS, or a Linux X11 session); it
-cannot run headless, and on Linux it uses X11 (not Wayland). Its
+cannot run headless, and on Linux it uses X11 (not Wayland). Input is
+event-driven, so quick key taps are never missed, and OS key auto-repeat is
+ignored for the one-shot actions. One known environment quirk: some window
+managers (observed under xpra) shrink the client area slightly right after
+the window is mapped (e.g. 800x600 becomes 790x568); the image and all
+controls keep working in the smaller window, which is freely resizable. Its
 `--input clipboard` / `--copy-to-clipboard` / "c" work on all of those via
 the system clipboard. Every other tool is headless.
 
