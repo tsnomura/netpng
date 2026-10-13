@@ -30,18 +30,24 @@ fi
 
 mkdir -p "$INSTALL_DIR" "$SHIM_DIR"
 
+# Windows/MSYS builds produce "$t.exe"; Linux/macOS produce "$t".
+EXE_SUFFIX=".exe"
+case "$(uname -s 2>/dev/null)" in
+  Linux|Darwin) EXE_SUFFIX="" ;;
+esac
+
 for t in "${TOOLS[@]}"; do
-  exe="$RELEASE_DIR/$t.exe"
+  exe="$RELEASE_DIR/$t$EXE_SUFFIX"
   if [ ! -f "$exe" ]; then
     echo "error: $exe not found -- run 'cargo build --workspace --release' first" >&2
     exit 1
   fi
-  cp -f "$exe" "$INSTALL_DIR/$t.exe"
+  cp -f "$exe" "$INSTALL_DIR/$t$EXE_SUFFIX"
 
   shim="$SHIM_DIR/$t"
   cat > "$shim" <<EOF
 #!/usr/bin/env bash
-exec "$INSTALL_DIR/$t.exe" "\$@"
+exec "$INSTALL_DIR/$t$EXE_SUFFIX" "\$@"
 EOF
   chmod +x "$shim"
 done
