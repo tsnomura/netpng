@@ -20,6 +20,7 @@ SHIM_DIR="${1:-$HOME/bin}"
 TOOLS=(
   pngcrop pngcat pngtrim pngcompose pnginfo pnginvert pngflip pngrotate
   pngscale pngnorm pngdist pngreduce pngchroma pngblur pngdecontaminate pngview
+  jpg2png png2jpg ico2png png2ico
 )
 
 if [ ! -d "$RELEASE_DIR" ]; then

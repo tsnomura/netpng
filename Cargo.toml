@@ -18,6 +18,10 @@ members = [
     "crates/pngblur",
     "crates/pngview",
     "crates/pngdecontaminate",
+    "crates/jpg2png",
+    "crates/png2jpg",
+    "crates/ico2png",
+    "crates/png2ico",
 ]
 
 [workspace.package]
