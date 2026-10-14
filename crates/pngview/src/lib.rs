@@ -48,7 +48,9 @@ struct Args {
 const MIN_ZOOM: f64 = 0.05;
 const MAX_ZOOM: f64 = 32.0;
 /// Zoom multiplier per unit of scroll-wheel delta; smaller = gentler.
-const ZOOM_WHEEL_FACTOR: f64 = 1.01;
+/// winit reports one wheel notch as a delta of 1.0 on every platform, so
+/// this is the per-notch zoom step.
+const ZOOM_WHEEL_FACTOR: f64 = 1.1;
 /// Small images (icons, sprites, our own test fixtures...) would otherwise
 /// open in a window as tiny as the image itself; scale up so the window's
 /// larger side is at least this many pixels.
@@ -68,14 +70,14 @@ enum Action {
     Reset,
 }
 
-/// Map a key to a pngview action, or None for keys we don't act on.
-/// Letter keys are matched case-insensitively so they still work with
-/// Shift held (or on layouts where the shifted symbol differs).
 /// Test hook: log every key event and focus change to stderr.
 fn pv_debug() -> bool {
     std::env::var_os("PV_DEBUG").is_some()
 }
 
+/// Map a key to a pngview action, or None for keys we don't act on.
+/// Letter keys are matched case-insensitively so they still work with
+/// Shift held (or on layouts where the shifted symbol differs).
 fn key_action(key: &Key) -> Option<Action> {
     match key {
         Key::Named(NamedKey::Escape) => Some(Action::Quit),
