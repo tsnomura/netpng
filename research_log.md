@@ -153,3 +153,83 @@ covers the practical case.
   `crates/pngview/src/lib.rs` (`"c"`, `--copy-to-clipboard`, `--timeout`)
 - commits: `4aff6c7` (detached-thread `wait()` fix), `d91bc4f` ("c" key),
   `cd31018` (`--copy-to-clipboard`/`--timeout`)
+
+## 2026-10-14 — `pngview` winit rewrite crashes under WSLg; fixed by disabling decorations on Linux
+
+### Goal
+A parallel work stream (merged via PR #2, `f3423a9`) replaced `pngview`'s
+window backend from `minifb` (polling-based) with `winit` + `softbuffer`
+(event-driven), to get correct per-notch wheel-zoom handling. Needed to
+verify this still works under WSLg (the Linux dev/test environment used
+throughout this project), since the old `minifb` version was confirmed
+working there.
+
+### Trial
+1. Built the new `winit`-based `pngview` in WSL2/Ubuntu + WSLg and ran it
+   normally (with and without `--timeout`).
+2. Forced the X11 backend via `WINIT_UNIX_BACKEND=x11` to see if avoiding
+   Wayland entirely sidestepped the problem.
+3. Captured a full `WAYLAND_DEBUG=1` protocol trace of a failing run and
+   inspected it for the actual point of failure.
+4. Added `.with_decorations(false)` to the `WindowAttributes` builder,
+   gated to `#[cfg(target_os = "linux")]` only (Windows/macOS keep native
+   server-side decorations), and reran the same tests.
+
+### Result
+1. Reliably failed, every run: window appeared to initialize, then
+   `Io error: Broken pipe (os error 32)` printed twice, followed by
+   `Error: event loop error: Exit Failure: 1` (process exit code 1).
+2. No change — still failed identically. (In hindsight this means the env
+   var had no effect on this `winit` version's backend selection; the
+   trace in step 3 is unambiguously Wayland protocol traffic, not X11.)
+3. The trace showed `smithay-client-toolkit`'s client-side-decoration
+   support (via `sctk-adwaita`) creating four border subsurfaces
+   (`wl_subsurface` objects for top/right/bottom/left strips around the
+   content area) and successfully attaching/damaging/committing buffers
+   for each. The real content surface (`wl_surface`) got one successful
+   `attach`/`damage_buffer`/`commit` near the end of the trace, and the
+   broken pipe followed immediately after — with no explicit Wayland
+   protocol error logged anywhere in the trace.
+4. Fixed. Three consecutive runs under WSLg completed cleanly (exit 0, no
+   broken-pipe message, no decoration subsurfaces in a fresh trace).
+   Rebuilt and retested on Windows afterward (`cfg(target_os = "linux")`
+   keeps the change Linux-only): compiles warning-free, native title bar
+   unaffected.
+
+### Interpretation
+WSLg's Wayland compositor (bridged through FreeRDP) doesn't support
+server-side decorations — this was already known from the old `minifb`
+version, which printed a "Failed to create server-side surface
+decoration: Missing" warning but otherwise worked fine, because `minifb`
+doesn't attempt a client-side fallback. `winit`'s stack (via
+`smithay-client-toolkit`/`sctk-adwaita`) does attempt a CSD fallback, and
+something in that compositor's handling of the extra decoration
+subsurfaces causes it to drop the Wayland connection outright, which
+`winit`'s event loop surfaces as a broken-pipe I/O error rather than a
+clean protocol error. Disabling decorations avoids the CSD code path
+entirely, so the compositor never gets to whatever it can't handle.
+
+### Decision
+Added `.with_decorations(false)` to the window builder, `#[cfg(target_os
+= "linux")]`-gated so Windows/macOS are unaffected. This is a reasonable
+permanent fix, not just a diagnostic workaround: `pngview` on Linux now
+has no title bar/window chrome (borderless), but all functionality
+(zoom/pan/save/clipboard/quit) is keyboard/mouse-driven already and
+doesn't depend on window chrome. This is likely WSLg-specific (its
+compositor is unusually limited/bridged); a native Wayland desktop
+(GNOME/KDE/Sway) would probably handle `sctk-adwaita` CSD correctly, but
+there was no such environment available to test, and disabling
+decorations is a safe, low-cost choice either way.
+
+### Next
+If decorations are ever wanted back on native (non-WSLg) Linux desktops,
+revisit with access to a real Wayland compositor to confirm whether the
+crash is WSLg-only before re-enabling. Also still unresolved: why
+`WINIT_UNIX_BACKEND=x11` had no effect on backend selection in this
+`winit` version -- not pursued further since the decorations fix resolved
+the actual problem.
+
+### Related
+- files: `crates/pngview/src/lib.rs` (`resumed`, `WindowAttributes`)
+- commits: `f3423a9` (winit rewrite that introduced the regression), and
+  the decorations-disable fix committed alongside this log entry

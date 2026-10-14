@@ -145,12 +145,17 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        let window = match event_loop.create_window(
-            WindowAttributes::default()
-                .with_title("pngview")
-                .with_inner_size(PhysicalSize::new(self.win_w, self.win_h))
-                .with_resizable(true),
-        ) {
+        let attrs = WindowAttributes::default()
+            .with_title("pngview")
+            .with_inner_size(PhysicalSize::new(self.win_w, self.win_h))
+            .with_resizable(true);
+        // WSLg's Wayland compositor closes the connection when
+        // smithay-client-toolkit's client-side decorations (sctk-adwaita) try
+        // to set up their border subsurfaces -- disable decorations on Linux
+        // to avoid that code path. Windows/macOS keep native decorations.
+        #[cfg(target_os = "linux")]
+        let attrs = attrs.with_decorations(false);
+        let window = match event_loop.create_window(attrs) {
             Ok(window) => window,
             Err(e) => {
                 eprintln!("pngview: failed to create the window: {e}");
