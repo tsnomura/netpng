@@ -610,6 +610,99 @@ pub fn parse_color(s: &str) -> anyhow::Result<[u8; 4]> {
     Ok([r, g, b, a])
 }
 
+/// Creates a new image of the given size, every pixel set to `color`
+/// (like pnmmake). Shared with [`pad`]'s border fill and `pngflatten`'s
+/// solid background.
+pub fn solid(width: u32, height: u32, color: [u8; 4]) -> Image {
+    let mut pixels = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for _ in 0..(width as usize * height as usize) {
+        pixels.extend_from_slice(&color);
+    }
+    Image { width, height, pixels }
+}
+
+/// Adds a border of `color` around `img` (like pnmpad). The original
+/// pixels are copied in as-is, not alpha-composited, so `img`'s own
+/// transparency is preserved exactly rather than being blended onto the
+/// border color.
+pub fn pad(img: &Image, top: u32, bottom: u32, left: u32, right: u32, color: [u8; 4]) -> Image {
+    let out_w = img.width + left + right;
+    let out_h = img.height + top + bottom;
+    let mut out = solid(out_w, out_h, color);
+    for row in 0..img.height {
+        let src_start = (row * img.width * 4) as usize;
+        let src_end = src_start + (img.width as usize) * 4;
+        let dst_start = (((row + top) * out_w + left) * 4) as usize;
+        let dst_end = dst_start + (img.width as usize) * 4;
+        out.pixels[dst_start..dst_end].copy_from_slice(&img.pixels[src_start..src_end]);
+    }
+    out
+}
+
+/// Extracts `img`'s alpha channel as a fully-opaque grayscale image
+/// (R=G=B=the original alpha value), the inverse of [`apply_alpha`]
+/// (like `pngtopnm -alpha`).
+pub fn extract_alpha(img: &Image) -> Image {
+    let mut pixels = vec![0u8; img.pixels.len()];
+    for (dst, src) in pixels.chunks_exact_mut(4).zip(img.pixels.chunks_exact(4)) {
+        let a = src[3];
+        dst[0] = a;
+        dst[1] = a;
+        dst[2] = a;
+        dst[3] = 255;
+    }
+    Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    }
+}
+
+/// Replaces `img`'s alpha channel with `mask`'s luma (BT.601 weights,
+/// matching netpbm's own RGB-to-gray formula), treating `mask` as a
+/// grayscale source (like `pnmtopng -alpha=`). `mask` must have the same
+/// dimensions as `img`.
+pub fn apply_alpha(img: &Image, mask: &Image) -> anyhow::Result<Image> {
+    ensure!(
+        img.width == mask.width && img.height == mask.height,
+        "mask is {}x{} but image is {}x{} -- they must match",
+        mask.width,
+        mask.height,
+        img.width,
+        img.height
+    );
+    let mut pixels = img.pixels.clone();
+    for (dst, src) in pixels.chunks_exact_mut(4).zip(mask.pixels.chunks_exact(4)) {
+        let luma = 0.299 * src[0] as f64 + 0.587 * src[1] as f64 + 0.114 * src[2] as f64;
+        dst[3] = luma.round().clamp(0.0, 255.0) as u8;
+    }
+    Ok(Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    })
+}
+
+/// Applies gamma correction to the RGB channels (alpha untouched): each
+/// channel becomes `(v/255)^(1/gamma) * 255` (like pnmgamma). `gamma` > 1
+/// brightens midtones; `gamma` < 1 darkens them.
+pub fn gamma(img: &Image, g: f64) -> anyhow::Result<Image> {
+    ensure!(g > 0.0, "--gamma must be greater than 0, got {g}");
+    let exponent = 1.0 / g;
+    let mut pixels = img.pixels.clone();
+    for px in pixels.chunks_exact_mut(4) {
+        for c in 0..3 {
+            let v = (px[c] as f64 / 255.0).powf(exponent) * 255.0;
+            px[c] = v.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    Ok(Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    })
+}
+
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
 pub enum CompressionLevel {
     Fast,
@@ -938,6 +1031,24 @@ fn flatten_alpha(img: &Image, background: [u8; 3]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Composites `img`'s alpha onto an opaque `background`, returning a
+/// fully-opaque image of the same size (like pnmflatten). Shared with the
+/// JPEG encoder below, which needs the same blend for a different reason
+/// (JPEG has no alpha channel at all).
+pub fn flatten(img: &Image, background: [u8; 3]) -> Image {
+    let rgb = flatten_alpha(img, background);
+    let mut pixels = vec![0u8; rgb.len() / 3 * 4];
+    for (dst, src) in pixels.chunks_exact_mut(4).zip(rgb.chunks_exact(3)) {
+        dst[..3].copy_from_slice(src);
+        dst[3] = 255;
+    }
+    Image {
+        width: img.width,
+        height: img.height,
+        pixels,
+    }
 }
 
 /// Encodes `img` as a baseline JPEG (RGB, no alpha channel): the alpha
@@ -1628,5 +1739,113 @@ mod tests {
         assert!(ico_directory(&[0, 0, 1, 0, 0, 0]).is_err(), "zero entries");
         // Two entries advertised, but no room for the directory records.
         assert!(ico_directory(&[0, 0, 1, 0, 2, 0, 1, 1, 0, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn solid_fills_every_pixel() {
+        let img = solid(2, 2, [10, 20, 30, 40]);
+        assert_eq!(img.width, 2);
+        assert_eq!(img.height, 2);
+        for px in img.pixels.chunks_exact(4) {
+            assert_eq!(px, [10, 20, 30, 40]);
+        }
+    }
+
+    #[test]
+    fn pad_preserves_original_pixels_and_fills_border() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![1, 2, 3, 128], // semi-transparent, must not be blended
+        };
+        let out = pad(&img, 1, 1, 1, 1, [9, 9, 9, 255]);
+        assert_eq!((out.width, out.height), (3, 3));
+        assert_eq!(pixel_at(&out, 1, 1), [1, 2, 3, 128]);
+        assert_eq!(pixel_at(&out, 0, 0), [9, 9, 9, 255]);
+        assert_eq!(pixel_at(&out, 2, 2), [9, 9, 9, 255]);
+    }
+
+    #[test]
+    fn extract_alpha_then_apply_alpha_round_trips() {
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![255, 0, 0, 10, 0, 255, 0, 200],
+        };
+        let mask = extract_alpha(&img);
+        assert_eq!(pixel_at(&mask, 0, 0), [10, 10, 10, 255]);
+        assert_eq!(pixel_at(&mask, 1, 0), [200, 200, 200, 255]);
+
+        let restored = apply_alpha(&img, &mask).unwrap();
+        assert_eq!(pixel_at(&restored, 0, 0)[3], 10);
+        assert_eq!(pixel_at(&restored, 1, 0)[3], 200);
+        // RGB is untouched by apply_alpha.
+        assert_eq!(pixel_at(&restored, 0, 0)[..3], [255, 0, 0]);
+    }
+
+    #[test]
+    fn apply_alpha_rejects_size_mismatch() {
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![0; 8],
+        };
+        let mask = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0; 4],
+        };
+        assert!(apply_alpha(&img, &mask).is_err());
+    }
+
+    #[test]
+    fn gamma_identity_at_one() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![64, 128, 200, 77],
+        };
+        let out = gamma(&img, 1.0).unwrap();
+        for (got, expected) in out.pixels.iter().zip(img.pixels.iter()) {
+            assert!(got.abs_diff(*expected) <= 1);
+        }
+    }
+
+    #[test]
+    fn gamma_above_one_brightens() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![64, 64, 64, 255],
+        };
+        let out = gamma(&img, 2.2).unwrap();
+        assert!(out.pixels[0] > img.pixels[0]);
+        assert_eq!(out.pixels[3], 255, "alpha must be untouched");
+    }
+
+    #[test]
+    fn gamma_rejects_non_positive() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0, 0, 0, 255],
+        };
+        assert!(gamma(&img, 0.0).is_err());
+        assert!(gamma(&img, -1.0).is_err());
+    }
+
+    #[test]
+    fn flatten_over_opaque_background_is_fully_opaque() {
+        let img = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0, 255, 0, 128], // 50% green
+        };
+        let out = flatten(&img, [255, 0, 0]); // over red
+        assert_eq!(out.pixels[3], 255);
+        // ~50% green over red should land near [127, 128, 0].
+        for (got, expected) in out.pixels[..3].iter().zip([127u8, 128, 0].iter()) {
+            assert!(got.abs_diff(*expected) <= 1, "got {:?}", out.pixels);
+        }
     }
 }

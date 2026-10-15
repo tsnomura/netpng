@@ -21,6 +21,7 @@ TOOLS=(
   pngcrop pngcat pngtrim pngcompose pnginfo pnginvert pngflip pngrotate
   pngscale pngnorm pngdist pngreduce pngchroma pngblur pngdecontaminate pngview
   jpg2png png2jpg ico2png png2ico
+  pngmake pngpad pngalpha pngflatten pnggamma
 )
 
 if [ ! -d "$RELEASE_DIR" ]; then

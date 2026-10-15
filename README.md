@@ -58,6 +58,11 @@ pngchroma photo.png --background 0,255,0 --blend 200 \
 | `png2jpg` | pnmtojpeg | Flatten alpha onto `--background` (default white) and encode as baseline JPEG at `--quality` |
 | `ico2png` | — | Extract one size from an ICO as PNG (default largest; `--size` picks the closest) |
 | `png2ico` | — | Pack an image into an ICO, one entry per size (default `16,32,48,256`) |
+| `pngmake` | pnmmake | Create a new solid-color PNG of a given size (no input image) |
+| `pngpad` | pnmpad | Add a border of a solid color around an image |
+| `pngalpha` | — | Extract the alpha channel as grayscale, or apply a grayscale `--mask` as the new alpha channel |
+| `pngflatten` | pnmflatten | Flatten transparency onto a solid `--background`, producing an opaque PNG |
+| `pnggamma` | pnmgamma | Apply gamma correction to the RGB channels |
 
 Run any tool with `--help` for its full flags — most of the color/geometry
 ones (`pngtrim`, `pngchroma`, `pngrotate`, `pngcompose`) have more knobs than

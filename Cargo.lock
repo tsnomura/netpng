@@ -1402,6 +1402,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pngalpha"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
 name = "pngblur"
 version = "0.1.0"
 dependencies = [
@@ -1465,7 +1474,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pngflatten"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
 name = "pngflip"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pnggamma"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1492,7 +1519,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pngmake"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
 name = "pngnorm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "netpng-core",
+]
+
+[[package]]
+name = "pngpad"
 version = "0.1.0"
 dependencies = [
  "anyhow",

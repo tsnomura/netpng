@@ -22,6 +22,11 @@ members = [
     "crates/png2jpg",
     "crates/ico2png",
     "crates/png2ico",
+    "crates/pngmake",
+    "crates/pngpad",
+    "crates/pngalpha",
+    "crates/pngflatten",
+    "crates/pnggamma",
 ]
 
 [workspace.package]
