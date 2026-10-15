@@ -629,7 +629,10 @@ impl From<CompressionLevel> for png::Compression {
 
 /// `-v`/`--version` and `-q`/`--quiet`, shared by every netpng tool's
 /// `Args` via `#[command(flatten)]` instead of each one redeclaring the
-/// same two fields.
+/// same two fields. `version` is read by `print_version_if_requested`,
+/// not from the parsed struct (see that function for why); it's kept
+/// here mainly so `--help` documents it and clap accepts it as a known
+/// flag.
 #[derive(clap::Args)]
 pub struct CommonArgs {
     /// Print the version and exit.
@@ -640,15 +643,31 @@ pub struct CommonArgs {
     pub quiet: bool,
 }
 
-impl CommonArgs {
-    /// If `--version` was given, prints `"<name> <version>"` and returns
-    /// `true` -- callers should return `Ok(())` immediately in that case.
-    pub fn print_version_and_exit(&self, name: &str, version: &str) -> bool {
-        if self.version {
-            println!("{name} {version}");
-        }
-        self.version
+/// Checks already-normalized argv for `-v`/`--version` and, if present,
+/// prints `"<name> <version>"` and returns `true` -- callers should
+/// return `Ok(())` immediately in that case, *before* calling
+/// `Args::parse_from`.
+///
+/// This has to happen before clap parses the rest of the arguments:
+/// unlike clap's own built-in `--help`, our hand-declared `version: bool`
+/// field is an ordinary flag, so clap would otherwise insist on every
+/// *other* required argument being present too before it ever reports
+/// that `--version` was passed. Scanning the raw tokens first gives
+/// `--version` the same "ignore everything else" short-circuit that
+/// `--help` gets for free.
+///
+/// Tokens after a literal `--` are left alone (treated as positional
+/// values, e.g. a file actually named `--version`), matching clap's own
+/// `--` convention.
+pub fn print_version_if_requested(argv: &[std::ffi::OsString], name: &str, version: &str) -> bool {
+    let wants = argv
+        .iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "-v" || a == "--version");
+    if wants {
+        println!("{name} {version}");
     }
+    wants
 }
 
 /// Rewrites netpbm-style single-dash common options to their two-dash

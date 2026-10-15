@@ -16,10 +16,11 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
+    let argv = netpng_core::normalize_args(args);
+    if netpng_core::print_version_if_requested(&argv, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
+    let args = Args::parse_from(argv);
     let _ = args.common.quiet;
     let info = read_info(&args.input)?;
     print!(
