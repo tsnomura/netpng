@@ -8,12 +8,8 @@ struct Args {
     /// Input path (JPEG), "-" or omitted for stdin.
     #[arg(default_value = "-")]
     input: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     #[arg(long, value_enum, default_value = "fast")]
     compression: CompressionLevel,
 }
@@ -24,11 +20,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
     let img = read_jpeg(&args.input)?;
     write_image("-", &img, args.compression)
 }

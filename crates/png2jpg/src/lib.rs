@@ -9,12 +9,8 @@ struct Args {
     /// Input path (PNG), "-" or omitted for stdin, or "clipboard".
     #[arg(default_value = "-")]
     input: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     /// Background color as "R,G,B" to flatten alpha onto.
     #[arg(long, default_value = "255,255,255")]
     background: String,
@@ -29,11 +25,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
     anyhow::ensure!((1..=100).contains(&args.quality), "--quality must be 1-100");
 
     let img = read_image(&args.input)?;

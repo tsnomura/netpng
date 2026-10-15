@@ -10,12 +10,8 @@ struct Args {
     /// Input path (PNG), "-" or omitted for stdin, or "clipboard".
     #[arg(default_value = "-")]
     input: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     /// Comma-separated output sizes in pixels, each 1-256.
     #[arg(long, default_value = "16,32,48,256", value_delimiter = ',')]
     sizes: Vec<u32>,
@@ -27,11 +23,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
     for s in &args.sizes {
         anyhow::ensure!((1..=256).contains(s), "--sizes: each size must be 1-256, got {s}");
     }

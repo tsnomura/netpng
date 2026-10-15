@@ -31,12 +31,8 @@ struct Args {
     /// Input path, "-" or omitted for stdin, or "clipboard".
     #[arg(default_value = "-")]
     input: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     /// Zoom level Space cycles to as its first step (2.0 = 200%).
     #[arg(long, default_value_t = 2.0)]
     zoom: f64,
@@ -444,14 +440,13 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
     let img = read_image(&args.input)?;
     let checkerboarded = composite_checkerboard(&img);
 
-    if !args.quiet {
+    if !args.common.quiet {
         eprintln!(
             "pngview: wheel = zoom, left-drag = pan, space = cycle zoom, enter = center, \
              0 = reset, s = save, c = copy to clipboard, Esc/q = quit"

@@ -13,12 +13,8 @@ struct Args {
     /// Input images (at least 2), in order; "-" for stdin (at most once), or "clipboard".
     #[arg(required = true)]
     inputs: Vec<String>,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     #[arg(long, value_enum, default_value = "horizontal")]
     direction: Direction,
     #[arg(long, value_enum, default_value = "fast")]
@@ -31,11 +27,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
 
     anyhow::ensure!(args.inputs.len() >= 2, "at least two input images are required");
     let stdin_count = args.inputs.iter().filter(|p| p.as_str() == "-").count();

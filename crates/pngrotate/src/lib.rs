@@ -9,12 +9,8 @@ struct Args {
     /// Input path, "-" or omitted for stdin, or "clipboard".
     #[arg(default_value = "-")]
     input: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     /// Rotation angle in degrees, clockwise.
     #[arg(long, allow_hyphen_values = true, default_value_t = 0.0)]
     angle: f64,
@@ -31,11 +27,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
     let background = parse_color(&args.background)?;
     let img = read_image(&args.input)?;
     let out = rotate(&img, args.angle, background);

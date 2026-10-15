@@ -627,6 +627,30 @@ impl From<CompressionLevel> for png::Compression {
     }
 }
 
+/// `-v`/`--version` and `-q`/`--quiet`, shared by every netpng tool's
+/// `Args` via `#[command(flatten)]` instead of each one redeclaring the
+/// same two fields.
+#[derive(clap::Args)]
+pub struct CommonArgs {
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    pub version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+}
+
+impl CommonArgs {
+    /// If `--version` was given, prints `"<name> <version>"` and returns
+    /// `true` -- callers should return `Ok(())` immediately in that case.
+    pub fn print_version_and_exit(&self, name: &str, version: &str) -> bool {
+        if self.version {
+            println!("{name} {version}");
+        }
+        self.version
+    }
+}
+
 /// Rewrites netpbm-style single-dash common options to their two-dash
 /// long form before clap sees them: `-version` -> `--version`,
 /// `-quiet` -> `--quiet`. clap's derive API only accepts the two-dash

@@ -10,12 +10,8 @@ struct Args {
     base: String,
     /// Overlay (top) image path, "-" for stdin, or "clipboard".
     overlay: String,
-    /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    version: bool,
-    /// Suppress informational messages (errors are still printed).
-    #[arg(short = 'q', long)]
-    quiet: bool,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
     /// X offset of the overlay's top-left corner on the base canvas.
     #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     x: i32,
@@ -32,11 +28,10 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args = Args::parse_from(netpng_core::normalize_args(args));
-    if args.version {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    if args.common.print_version_and_exit(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
         return Ok(());
     }
-    let _ = args.quiet;
+    let _ = args.common.quiet;
     anyhow::ensure!(
         !(args.base == "-" && args.overlay == "-"),
         "base and overlay can't both be \"-\" (stdin can only be read once)"
