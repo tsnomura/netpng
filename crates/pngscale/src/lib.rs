@@ -6,12 +6,15 @@ use netpng_core::{read_image, scale, write_image, CompressionLevel};
 /// one is given).
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -28,7 +31,12 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     let img = read_image(&args.input)?;
 
     let (out_w, out_h) = if let Some(s) = args.scale {
@@ -58,5 +66,5 @@ where
 
     anyhow::ensure!(out_w >= 1 && out_h >= 1, "resulting dimensions must be at least 1x1");
     let out = scale(&img, out_w, out_h);
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }

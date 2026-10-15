@@ -7,12 +7,15 @@ use netpng_core::{read_image, write_ico};
 /// 256 as PNG-compressed.
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path (PNG), "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout.
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// Comma-separated output sizes in pixels, each 1-256.
     #[arg(long, default_value = "16,32,48,256", value_delimiter = ',')]
     sizes: Vec<u32>,
@@ -23,10 +26,15 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     for s in &args.sizes {
         anyhow::ensure!((1..=256).contains(s), "--sizes: each size must be 1-256, got {s}");
     }
     let img = read_image(&args.input)?;
-    write_ico(&args.output, &img, &args.sizes)
+    write_ico("-", &img, &args.sizes)
 }

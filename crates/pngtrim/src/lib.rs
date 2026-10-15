@@ -7,12 +7,15 @@ use netpng_core::{crop, parse_color, pixel_at, read_image, write_image, Compress
 /// trimmed to the bounding box of every pixel that differs from it.
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     #[arg(long, value_enum, default_value = "fast")]
     compression: CompressionLevel,
 
@@ -46,7 +49,12 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     let img = read_image(&args.input)?;
 
     let bg = match &args.background {
@@ -91,5 +99,5 @@ where
     let bottom = bottom.saturating_add(args.margin).min(img.height);
 
     let trimmed = crop(&img, left, top, right - left, bottom - top)?;
-    write_image(&args.output, &trimmed, args.compression)
+    write_image("-", &trimmed, args.compression)
 }

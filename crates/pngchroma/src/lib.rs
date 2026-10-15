@@ -19,12 +19,15 @@ use netpng_core::{chroma_key, parse_color, pixel_at, read_image, write_image, Co
 /// background color's tint from those partially transparent edge pixels.
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// Background color as "R,G,B"; defaults to the top-left pixel.
     #[arg(long)]
     background: Option<String>,
@@ -46,7 +49,12 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     anyhow::ensure!(args.blend > 0.0, "--blend must be positive");
 
     let img = read_image(&args.input)?;
@@ -62,5 +70,5 @@ where
     };
 
     let out = chroma_key(&img, background, args.similarity, args.blend);
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }

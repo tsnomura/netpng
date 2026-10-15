@@ -4,12 +4,15 @@ use netpng_core::{invert, read_image, write_image, CompressionLevel};
 /// Invert the RGB channels of an image (like pnminvert). Alpha is untouched.
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     #[arg(long, value_enum, default_value = "fast")]
     compression: CompressionLevel,
 }
@@ -19,8 +22,13 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     let img = read_image(&args.input)?;
     let out = invert(&img);
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }

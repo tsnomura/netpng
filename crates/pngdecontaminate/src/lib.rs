@@ -7,12 +7,15 @@ use netpng_core::{decontaminate, parse_color, read_image, write_image, Compressi
 /// color used to key it. Fully opaque/transparent pixels are untouched.
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// The background color that was keyed out, as "R,G,B".
     #[arg(long)]
     background: String,
@@ -25,9 +28,14 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     let [r, g, b, _] = parse_color(&args.background)?;
     let img = read_image(&args.input)?;
     let out = decontaminate(&img, [r, g, b]);
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }

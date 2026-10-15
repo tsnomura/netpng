@@ -6,12 +6,15 @@ use netpng_core::{parse_color, read_image, write_jpeg};
 /// (default: white).
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path (PNG), "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout.
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// Background color as "R,G,B" to flatten alpha onto.
     #[arg(long, default_value = "255,255,255")]
     background: String,
@@ -25,10 +28,15 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     anyhow::ensure!((1..=100).contains(&args.quality), "--quality must be 1-100");
 
     let img = read_image(&args.input)?;
     let [r, g, b, _] = parse_color(&args.background)?;
-    write_jpeg(&args.output, &img, [r, g, b], args.quality)
+    write_jpeg("-", &img, [r, g, b], args.quality)
 }

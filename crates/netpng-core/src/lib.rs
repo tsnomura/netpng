@@ -627,6 +627,29 @@ impl From<CompressionLevel> for png::Compression {
     }
 }
 
+/// Rewrites netpbm-style single-dash common options to their two-dash
+/// long form before clap sees them: `-version` -> `--version`,
+/// `-quiet` -> `--quiet`. clap's derive API only accepts the two-dash
+/// form for long options, so every tool funnels its raw argument
+/// iterator through this before parsing; all other tokens pass through
+/// unchanged.
+pub fn normalize_args<I, T>(args: I) -> Vec<std::ffi::OsString>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString>,
+{
+    args.into_iter()
+        .map(|arg| {
+            let os: std::ffi::OsString = arg.into();
+            match os.to_str() {
+                Some("-version") => std::ffi::OsString::from("--version"),
+                Some("-quiet") => std::ffi::OsString::from("--quiet"),
+                _ => os,
+            }
+        })
+        .collect()
+}
+
 /// Opens `path` for reading, treating the literal `"-"` as stdin.
 /// Every netpng tool shares this convention.
 pub fn open_input(path: &str) -> anyhow::Result<Box<dyn Read>> {
@@ -649,7 +672,7 @@ pub fn open_output(path: &str) -> anyhow::Result<Box<dyn Write>> {
 /// Reads an image from `path`: the literal `"clipboard"` reads whatever
 /// image is currently on the system clipboard, `"-"` reads a PNG stream
 /// from stdin, and anything else is read as a PNG file. This is the
-/// convention every netpng tool's `--input` should go through.
+/// convention every netpng tool's input should go through.
 pub fn read_image(path: &str) -> anyhow::Result<Image> {
     if path == "clipboard" {
         read_clipboard_image()

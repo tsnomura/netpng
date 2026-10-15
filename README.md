@@ -6,9 +6,9 @@ image editor, each tool does one thing and tools are meant to be connected
 with pipes.
 
 ```
-pngchroma --input photo.png --background 0,255,0 --blend 200 \
+pngchroma photo.png --background 0,255,0 --blend 200 \
   | pngdecontaminate --background 0,255,0 \
-  | pngcompose --base newbg.png --overlay - --output result.png
+  | pngcompose newbg.png - > result.png
 ```
 
 ## Design
@@ -21,10 +21,15 @@ pngchroma --input photo.png --background 0,255,0 --blend 200 \
   a file", since that would make a tool's output depend on how it's invoked.
 - **One job per tool.** No tool takes a chain of operations; if you want crop
   then rotate then compose, that's three tools in a pipe.
-- **Uniform `--input`/`--output` convention**, shared by every tool:
-  - a file path
-  - `-` for stdin/stdout
-  - `clipboard` for the system clipboard
+- **netpbm-flavored common conventions**, shared by every tool:
+  - input is a **positional argument** at the end of the command: a
+    file path, `-` (or omitted) for stdin, or `clipboard` for the system
+    clipboard (PNG tools only)
+  - **output goes to stdout** — redirect it with the shell
+    (`pngtrim in.png > out.png`); there is no `--output` flag
+  - `-version` (also `-v` / `--version`) prints the version and exits
+  - `-quiet` (also `-q` / `--quiet`) suppresses informational messages;
+    errors are still printed
 - Internally, every tool normalizes images to 8-bit RGBA (`netpng-core`'s
   `Image` type) regardless of the source PNG's original color type or bit
   depth.
@@ -73,7 +78,7 @@ ignored for the one-shot actions. One known environment quirk: some window
 managers (observed under xpra) shrink the client area slightly right after
 the window is mapped (e.g. 800x600 becomes 790x568); the image and all
 controls keep working in the smaller window, which is freely resizable. Its
-`--input clipboard` / `--copy-to-clipboard` / "c" work on all of those via
+`clipboard` input / `--copy-to-clipboard` / "c" work on all of those via
 the system clipboard. Every other tool is headless.
 
 ## Installing on PATH (bash-like shells: Git Bash / MSYS / WSL / Linux / macOS)

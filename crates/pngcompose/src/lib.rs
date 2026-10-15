@@ -7,14 +7,15 @@ use netpng_core::{composite_over, read_image, write_image, CompressionLevel};
 #[derive(Parser)]
 struct Args {
     /// Base (bottom) image path, "-" for stdin, or "clipboard".
-    #[arg(long)]
     base: String,
     /// Overlay (top) image path, "-" for stdin, or "clipboard".
-    #[arg(long)]
     overlay: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// X offset of the overlay's top-left corner on the base canvas.
     #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     x: i32,
@@ -30,14 +31,19 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     anyhow::ensure!(
         !(args.base == "-" && args.overlay == "-"),
-        "--base and --overlay can't both be \"-\" (stdin can only be read once)"
+        "base and overlay can't both be \"-\" (stdin can only be read once)"
     );
 
     let base = read_image(&args.base)?;
     let overlay = read_image(&args.overlay)?;
     let result = composite_over(&base, &overlay, args.x, args.y);
-    write_image(&args.output, &result, args.compression)
+    write_image("-", &result, args.compression)
 }

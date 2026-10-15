@@ -233,3 +233,54 @@ the actual problem.
 - files: `crates/pngview/src/lib.rs` (`resumed`, `WindowAttributes`)
 - commits: `f3423a9` (winit rewrite that introduced the regression), and
   the decorations-disable fix committed alongside this log entry
+
+## 2026-10-15 — CLI aligned to netpbm's common argument conventions
+
+### Goal
+User request: make all 20 tools follow netpbm's shared argument
+conventions — input as a trailing positional argument (`-` or omitted =
+stdin), output fixed to stdout (no `--output` flag), and the common
+`-version`/`-quiet` options (single-dash long forms, plus `-v`/`-q`/
+two-dash variants) on every tool.
+
+### Trial
+- `netpng-core::normalize_args`: rewrites standalone `-version`/`-quiet`
+  tokens to `--version`/`--quiet` before clap sees them (clap's derive
+  API only accepts the two-dash form for long options; netpbm
+  users type the single-dash form). Every tool funnels its raw arg
+  iterator through it.
+- Per tool: `--input` -> positional `INPUT` (default `-`); `pngcat`
+  takes variadic `INPUTS...` (>=2, at most one `-`); `pngcompose` takes
+  `BASE OVERLAY`; every `--output` removed -> `write_image("-", ...)`;
+  `-v`/`--version` (prints `name version`, exits) and `-q`/`--quiet`
+  added to all 20.
+- Clipboard *output* removed entirely (`--output clipboard` is gone);
+  `clipboard` remains an *input* value, and pngview's "c" /
+  `--copy-to-clipboard` is the intended clipboard-output path (see the
+  2026-10-01 entry on X11 selection-owner lifetime).
+
+### Result
+Workspace rebuilds warning-free; `cargo test --workspace` green (23 core
+tests). E2E-verified in bash: positional input from file and stdin,
+stdout redirects, `pngcat a b`, `pngcompose a b --x --y`, JPEG/ICO
+round-trips, old `--input`/`--output` now rejected (exit 2), and
+`-version`/`-v`/`--version`/`-quiet` all accepted.
+
+### Decision
+- stdout-only output makes the README's pipe story the real usage; the
+  `--output` flag was redundant with shell redirection everywhere except
+  the clipboard, which had the known Linux lifetime problem, so dropping
+  it loses nothing practical.
+- Considered and declined (user chose not to): general single-dash long
+  forms for *all* options (`-quality`, `-x`, ...) and netpbm-style color
+  specifiers (`red`, `#rrggbb`, `rgb:`) — normalization is scoped to the
+  two common flags only, and colors stay `"R,G,B[,A]"`.
+- `-quiet` is a reserved no-op in the 19 pipeline tools (they print no
+  informational messages); only pngview's controls hint is actually
+  gated on it.
+
+### Related
+- files: `crates/netpng-core/src/lib.rs` (`normalize_args`),
+  `crates/*/src/lib.rs` (all 20 CLIs), `README.md`
+- commit: on branch `jpeg-ico-tools` (same branch/PR as the JPEG/ICO
+  converter tools)

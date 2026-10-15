@@ -10,12 +10,15 @@ enum Direction {
 /// Concatenate PNG images side by side (horizontal) or stacked (vertical).
 #[derive(Parser)]
 struct Args {
-    /// Input path (repeatable, at least 2), "-" for stdin (at most once), or "clipboard".
-    #[arg(long = "input", required = true)]
+    /// Input images (at least 2), in order; "-" for stdin (at most once), or "clipboard".
+    #[arg(required = true)]
     inputs: Vec<String>,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     #[arg(long, value_enum, default_value = "horizontal")]
     direction: Direction,
     #[arg(long, value_enum, default_value = "fast")]
@@ -27,11 +30,16 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
 
-    anyhow::ensure!(args.inputs.len() >= 2, "--input must be given at least twice");
+    anyhow::ensure!(args.inputs.len() >= 2, "at least two input images are required");
     let stdin_count = args.inputs.iter().filter(|p| p.as_str() == "-").count();
-    anyhow::ensure!(stdin_count <= 1, "at most one --input may be \"-\" (stdin)");
+    anyhow::ensure!(stdin_count <= 1, "at most one input may be \"-\" (stdin)");
 
     let images: Vec<Image> = args
         .inputs
@@ -44,7 +52,7 @@ where
         Direction::Vertical => cat_vertical(&images)?,
     };
 
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }
 
 fn cat_horizontal(images: &[Image]) -> anyhow::Result<Image> {

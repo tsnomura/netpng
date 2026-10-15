@@ -6,12 +6,15 @@ use netpng_core::{parse_color, read_image, rotate, write_image, CompressionLevel
 /// filled with `--background` (default: transparent).
 #[derive(Parser)]
 struct Args {
-    /// Input path, "-" for stdin, or "clipboard".
-    #[arg(long, default_value = "-")]
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(default_value = "-")]
     input: String,
-    /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
-    output: String,
+    /// Print the version and exit.
+    #[arg(short = 'v', long)]
+    version: bool,
+    /// Suppress informational messages (errors are still printed).
+    #[arg(short = 'q', long)]
+    quiet: bool,
     /// Rotation angle in degrees, clockwise.
     #[arg(long, allow_hyphen_values = true, default_value_t = 0.0)]
     angle: f64,
@@ -27,9 +30,14 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let args = Args::parse_from(args);
+    let args = Args::parse_from(netpng_core::normalize_args(args));
+    if args.version {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let _ = args.quiet;
     let background = parse_color(&args.background)?;
     let img = read_image(&args.input)?;
     let out = rotate(&img, args.angle, background);
-    write_image(&args.output, &out, args.compression)
+    write_image("-", &out, args.compression)
 }
