@@ -532,61 +532,93 @@ fn gaussian_kernel(sigma: f64) -> Vec<f64> {
 }
 
 /// Applies a separable Gaussian blur (edges clamped to the border pixel)
-/// to the selected `channels`. Selecting [`BlurChannels::Alpha`] feathers
-/// a mask (e.g. from [`chroma_key`]) without blurring its colors.
+/// to the selected `channels`.
+///
+/// The blur is alpha-weighted (done on premultiplied color), so the color
+/// stored in a fully transparent pixel -- invisible, and typically the
+/// keyed-out background, e.g. pure green after [`chroma_key`] -- never
+/// bleeds into the result:
+/// - [`BlurChannels::All`]: color and alpha are blurred together.
+/// - [`BlurChannels::Rgb`]: alpha is kept; each pixel's color becomes the
+///   alpha-weighted average of its neighborhood's visible colors.
+/// - [`BlurChannels::Alpha`]: feathers the mask. Pixels that were already
+///   visible keep their exact color; pixels that only become visible
+///   through the blur take the alpha-weighted color of their visible
+///   neighbors instead of whatever invisible color they held.
 pub fn blur(img: &Image, sigma: f64, channels: BlurChannels) -> anyhow::Result<Image> {
-    ensure!(sigma > 0.0, "sigma must be positive");
+    ensure!(sigma.is_finite() && sigma > 0.0, "sigma must be a finite number greater than 0");
     let kernel = gaussian_kernel(sigma);
     let radius = (kernel.len() / 2) as i32;
-    let chans: &[usize] = match channels {
-        BlurChannels::All => &[0, 1, 2, 3],
-        BlurChannels::Rgb => &[0, 1, 2],
-        BlurChannels::Alpha => &[3],
-    };
-
     let (w, h) = (img.width as i32, img.height as i32);
-    let src: Vec<f64> = img.pixels.iter().map(|&v| v as f64).collect();
 
-    let mut horiz = src.clone();
+    // Premultiplied planes: R*a, G*a, B*a, a (a in 0..=1 for RGB, 0..=255 for A).
+    let mut src = Vec::with_capacity(img.pixels.len());
+    for px in img.pixels.chunks_exact(4) {
+        let a = px[3] as f64 / 255.0;
+        src.extend_from_slice(&[px[0] as f64 * a, px[1] as f64 * a, px[2] as f64 * a, px[3] as f64]);
+    }
+
+    let mut horiz = vec![0.0; src.len()];
     for y in 0..h {
         for x in 0..w {
-            for &c in chans {
-                let mut acc = 0.0;
-                for (k, &wgt) in kernel.iter().enumerate() {
-                    let sx = (x + k as i32 - radius).clamp(0, w - 1);
-                    acc += wgt * src[((y * w + sx) * 4) as usize + c];
+            let dst = ((y * w + x) * 4) as usize;
+            for (k, &wgt) in kernel.iter().enumerate() {
+                let sx = (x + k as i32 - radius).clamp(0, w - 1);
+                let s = ((y * w + sx) * 4) as usize;
+                for c in 0..4 {
+                    horiz[dst + c] += wgt * src[s + c];
                 }
-                horiz[((y * w + x) * 4) as usize + c] = acc;
+            }
+        }
+    }
+    let mut blurred = vec![0.0; src.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let dst = ((y * w + x) * 4) as usize;
+            for (k, &wgt) in kernel.iter().enumerate() {
+                let sy = (y + k as i32 - radius).clamp(0, h - 1);
+                let s = ((sy * w + x) * 4) as usize;
+                for c in 0..4 {
+                    blurred[dst + c] += wgt * horiz[s + c];
+                }
             }
         }
     }
 
-    let mut vert = horiz.clone();
-    for y in 0..h {
-        for x in 0..w {
-            for &c in chans {
-                let mut acc = 0.0;
-                for (k, &wgt) in kernel.iter().enumerate() {
-                    let sy = (y + k as i32 - radius).clamp(0, h - 1);
-                    acc += wgt * horiz[((sy * w + x) * 4) as usize + c];
+    let to_u8 = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+    let mut pixels = img.pixels.clone();
+    for (i, px) in pixels.chunks_exact_mut(4).enumerate() {
+        let b = &blurred[i * 4..i * 4 + 4];
+        // b[3] is the blurred alpha (0..=255); b[0..3] / (b[3]/255) is the
+        // alpha-weighted average color of the neighborhood's visible pixels.
+        let weight = b[3] / 255.0;
+        let neighborhood_color = |c: usize| if weight > 1e-9 { Some(to_u8(b[c] / weight)) } else { None };
+        match channels {
+            BlurChannels::All => {
+                for c in 0..3 {
+                    px[c] = neighborhood_color(c).unwrap_or(0);
                 }
-                vert[((y * w + x) * 4) as usize + c] = acc;
+                px[3] = to_u8(b[3]);
+            }
+            BlurChannels::Rgb => {
+                for c in 0..3 {
+                    if let Some(v) = neighborhood_color(c) {
+                        px[c] = v;
+                    }
+                }
+            }
+            BlurChannels::Alpha => {
+                if px[3] == 0 {
+                    for c in 0..3 {
+                        if let Some(v) = neighborhood_color(c) {
+                            px[c] = v;
+                        }
+                    }
+                }
+                px[3] = to_u8(b[3]);
             }
         }
     }
-
-    let pixels: Vec<u8> = img
-        .pixels
-        .iter()
-        .enumerate()
-        .map(|(i, &orig)| {
-            if chans.contains(&(i % 4)) {
-                vert[i].round().clamp(0.0, 255.0) as u8
-            } else {
-                orig
-            }
-        })
-        .collect();
     Ok(Image {
         width: img.width,
         height: img.height,
@@ -1669,6 +1701,31 @@ mod tests {
         assert_eq!(out.pixels[0], 10, "RGB must be untouched by alpha-only blur");
         // Alpha should have spread from the single 255 pixel into its neighbor.
         assert!(out.pixels[3 + 4] > 0, "alpha should have blurred into the neighbor");
+    }
+
+    /// A red opaque half next to a fully transparent half whose (invisible)
+    /// color is pure green, like pngchroma output on a green screen.
+    fn red_beside_transparent_green() -> Image {
+        let mut pixels = Vec::new();
+        for x in 0..8 {
+            pixels.extend_from_slice(if x < 4 { &[200, 40, 40, 255] } else { &[0, 255, 0, 0] });
+        }
+        Image { width: 8, height: 1, pixels }
+    }
+
+    #[test]
+    fn blur_never_reveals_the_color_of_transparent_pixels() {
+        let img = red_beside_transparent_green();
+        for channels in [BlurChannels::All, BlurChannels::Rgb, BlurChannels::Alpha] {
+            let out = blur(&img, 1.0, channels).unwrap();
+            for px in out.pixels.chunks_exact(4).filter(|px| px[3] > 0) {
+                assert_eq!(&px[..3], &[200, 40, 40], "{channels:?}: green leaked into {px:?}");
+            }
+        }
+        // Feathering really did spread alpha into the transparent half.
+        let feathered = blur(&img, 1.0, BlurChannels::Alpha).unwrap();
+        assert!(pixel_at(&feathered, 4, 0)[3] > 0);
+        assert!(pixel_at(&feathered, 3, 0)[3] < 255);
     }
 
     #[test]
