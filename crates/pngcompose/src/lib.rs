@@ -5,6 +5,7 @@ use netpng_core::{composite_over, read_image, write_image, CompressionLevel};
 /// The output has the base image's dimensions; the overlay is clipped
 /// silently wherever it falls outside those bounds.
 #[derive(Parser)]
+#[command(version)]
 struct Args {
     /// Base (bottom) image path, "-" for stdin, or "clipboard".
     #[arg(value_name = "BASE")]
@@ -12,14 +13,16 @@ struct Args {
     /// Overlay (top) image path, "-" for stdin, or "clipboard".
     #[arg(value_name = "OVERLAY")]
     overlay: Option<String>,
-    /// Base (bottom) image; takes precedence over the positional BASE.
+    /// Base (bottom) image, as a flag; positional images then fill the
+    /// remaining slot(s) in BASE, OVERLAY order.
     #[arg(long = "base", value_name = "BASE")]
     base_flag: Option<String>,
-    /// Overlay (top) image; takes precedence over the positional OVERLAY.
+    /// Overlay (top) image, as a flag; positional images then fill the
+    /// remaining slot(s) in BASE, OVERLAY order.
     #[arg(long = "overlay", value_name = "OVERLAY")]
     overlay_flag: Option<String>,
     /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
+    #[arg(short = 'o', long, default_value = "-")]
     output: String,
     #[command(flatten)]
     common: netpng_core::CommonArgs,
@@ -38,20 +41,22 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let argv = netpng_core::normalize_args(args);
-    if netpng_core::print_version_if_requested(&argv, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
-        return Ok(());
-    }
-    let args = Args::parse_from(argv);
-    let _ = args.common.quiet;
+    let args = Args::parse_from(args);
+    // Flags claim their slot first; positionals fill whatever is left, in
+    // order, so `--base bg.png fg.png` and `--overlay fg.png bg.png` both work.
+    let mut positionals = args.base.into_iter().chain(args.overlay);
     let base = args
         .base_flag
-        .or(args.base)
+        .or_else(|| positionals.next())
         .ok_or_else(|| anyhow::anyhow!("a base image is required (positional BASE or --base)"))?;
     let overlay = args
         .overlay_flag
-        .or(args.overlay)
+        .or_else(|| positionals.next())
         .ok_or_else(|| anyhow::anyhow!("an overlay image is required (positional OVERLAY or --overlay)"))?;
+    anyhow::ensure!(
+        positionals.next().is_none(),
+        "too many images: give BASE and OVERLAY once each (positionally or via --base/--overlay)"
+    );
     anyhow::ensure!(
         !(base == "-" && overlay == "-"),
         "base and overlay can't both be \"-\" (stdin can only be read once)"

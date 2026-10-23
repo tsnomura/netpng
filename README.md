@@ -23,15 +23,21 @@ pngchroma photo.png --background 0,255,0 --blend 200 \
   then rotate then compose, that's three tools in a pipe.
 - **netpbm-flavored common conventions**, shared by every tool:
   - input is a **positional argument** at the end of the command, or the
-    equivalent `--input` flag (same value either way; the flag wins if
-    both are given): a file path, `-` (or omitted) for stdin, or
+    equivalent `-i` / `--input` flag (same value either way; giving both is
+    an error): a file path, `-` (or omitted) for stdin, or
     `clipboard` for the system clipboard (PNG tools only)
   - **output goes to stdout** by default — redirect it with the shell
     (`pngtrim in.png > out.png`), or write a file (or the clipboard) with
-    `--output` (`pngtrim in.png --output out.png`)
-  - `-version` (also `-v` / `--version`) prints the version and exits
-  - `-quiet` (also `-q` / `--quiet`) suppresses informational messages;
-    errors are still printed
+    `-o` / `--output` (`pngtrim in.png -o out.png`). On Linux,
+    `--output clipboard` keeps the command running, serving the image,
+    until something else is copied (the clipboard there is served by the
+    process that set it)
+  - `-v` / `--version` prints the version and exits
+  - `-q` / `--quiet` suppresses informational messages; errors are still
+    printed
+  - options follow the usual Unix/GNU style rather than netpbm's: one
+    dash for single-letter options (which can be combined, e.g. `-qv`),
+    two dashes for long ones (`--width`, `--output`, ...)
 - Internally, every tool normalizes images to 8-bit RGBA (`netpng-core`'s
   `Image` type) regardless of the source PNG's original color type or bit
   depth.
@@ -42,7 +48,7 @@ pngchroma photo.png --background 0,255,0 --blend 200 \
 |---|---|---|
 | `pngcrop` | pamcut | Crop to a rectangle (`--x --y --width --height`) |
 | `pngtrim` | pnmcrop | Auto-detect and remove a uniform-color border |
-| `pngcat` | — | Concatenate images horizontally or vertically; a single input passes through unchanged |
+| `pngcat` | — | Concatenate images horizontally or vertically; a single input (stdin if none given) passes through unchanged |
 | `pngcompose` | — | Alpha-composite (Porter-Duff "over") an overlay onto a base image at an offset |
 | `pngflip` | pamflip | Mirror or rotate by a multiple of 90 degrees |
 | `pngrotate` | pnmrotate | Rotate by an arbitrary angle, bilinear-sampled, canvas auto-expanded |
@@ -60,7 +66,7 @@ pngchroma photo.png --background 0,255,0 --blend 200 \
 | `png2jpg` | pnmtojpeg | Flatten alpha onto `--background` (default white) and encode as baseline JPEG at `--quality` |
 | `ico2png` | — | Extract one size from an ICO as PNG (default largest; `--size` picks the closest) |
 | `png2ico` | — | Pack an image into an ICO, one entry per size (default `16,32,48,256`) |
-| `clip2png` | — | Copy the PNG image on the clipboard to stdout or a file, unchanged (no input image) |
+| `clip2png` | — | Copy the image on the clipboard to stdout or a file as an 8-bit RGBA PNG (no input image) |
 | `pngmake` | pnmmake | Create a new solid-color PNG of a given size (no input image) |
 | `pngpad` | pnmpad | Add a border of a solid color around an image |
 | `pngalpha` | — | Extract the alpha channel as grayscale, or apply a grayscale `--mask` as the new alpha channel |

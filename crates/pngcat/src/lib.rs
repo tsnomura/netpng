@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use netpng_core::{read_image, write_image, CompressionLevel, Image};
 
 #[derive(Copy, Clone, ValueEnum)]
@@ -8,17 +8,21 @@ enum Direction {
 }
 
 /// Concatenate PNG images side by side (horizontal) or stacked (vertical).
-/// A single input is passed through unchanged, like `cat`.
+/// A single input is passed through unchanged, like `cat`; with no input
+/// at all, stdin is that single input.
 #[derive(Parser)]
+#[command(version)]
 struct Args {
-    /// Input images (at least 1), in order; "-" for stdin (at most once), or "clipboard".
+    /// Input images, in order; "-" for stdin (at most once; also the
+    /// default when no input is given), or "clipboard".
     #[arg(value_name = "INPUTS")]
     inputs: Vec<String>,
-    /// Additional input images, appended after the positional INPUTS.
-    #[arg(long = "input", value_name = "INPUT")]
+    /// Same as an INPUTS entry, as a flag (repeatable); positional and
+    /// flag inputs keep the order they were given in on the command line.
+    #[arg(short = 'i', long = "input", value_name = "INPUT")]
     input: Vec<String>,
     /// Output path, "-" for stdout, or "clipboard".
-    #[arg(long, default_value = "-")]
+    #[arg(short = 'o', long, default_value = "-")]
     output: String,
     #[command(flatten)]
     common: netpng_core::CommonArgs,
@@ -33,16 +37,25 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let argv = netpng_core::normalize_args(args);
-    if netpng_core::print_version_if_requested(&argv, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
-        return Ok(());
-    }
-    let args = Args::parse_from(argv);
-    let _ = args.common.quiet;
+    // Parsed via ArgMatches rather than Args::parse_from: clap stores
+    // positional INPUTS and --input values separately, and only the
+    // matches' indices tell how the two were interleaved on the command line.
+    let matches = Args::command().get_matches_from(args);
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
-    let mut inputs = args.inputs;
-    inputs.extend(args.input);
-    anyhow::ensure!(!inputs.is_empty(), "at least one input image is required");
+    let mut indexed: Vec<(usize, String)> = Vec::new();
+    for id in ["inputs", "input"] {
+        if let (Some(values), Some(indices)) =
+            (matches.get_many::<String>(id), matches.indices_of(id))
+        {
+            indexed.extend(indices.zip(values.cloned()));
+        }
+    }
+    indexed.sort_by_key(|&(index, _)| index);
+    let mut inputs: Vec<String> = indexed.into_iter().map(|(_, path)| path).collect();
+    if inputs.is_empty() {
+        inputs.push("-".to_string());
+    }
     let stdin_count = inputs.iter().filter(|p| p.as_str() == "-").count();
     anyhow::ensure!(stdin_count <= 1, "at most one input may be \"-\" (stdin)");
 

@@ -1,5 +1,5 @@
 use clap::Parser;
-use netpng_core::{read_image, write_image, CompressionLevel, Image};
+use netpng_core::{copy_to_clipboard, read_image, write_image, CompressionLevel, Image};
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -20,21 +20,17 @@ use winit::window::{Window, WindowAttributes, WindowId};
 /// the clipboard; the window is resizable; Esc or "q" or closing the
 /// window exits.
 ///
-/// "c" (or --copy-to-clipboard) is the practical way to get a result onto
-/// the clipboard on Linux: X11's clipboard only serves content for as long
-/// as the setting process stays alive, so a one-shot CLI call that writes
-/// the clipboard loses it the instant it exits. pngview is already
-/// long-lived (it runs until you close it, or --timeout elapses), so
-/// copying from here keeps working for as long as the window stays open.
+/// "c" (or --copy-to-clipboard) puts the image on the clipboard without
+/// blocking. On Linux the clipboard is served by the process that set it,
+/// so a one-shot tool's `--output clipboard` has to stay running in the
+/// foreground until something else is copied; pngview is already
+/// long-lived (it runs until you close it, or --timeout elapses), so it
+/// serves the image in the background for as long as the window is open.
 #[derive(Parser)]
+#[command(version)]
 struct Args {
-    /// Input path, "-" or omitted for stdin, or "clipboard".
-    #[arg(default_value = "-", value_name = "INPUT")]
-    input: String,
-    /// Same as INPUT, as a flag; takes precedence over the positional
-    /// argument when both are given.
-    #[arg(long = "input", value_name = "INPUT")]
-    input_flag: Option<String>,
+    #[command(flatten)]
+    input: netpng_core::InputArgs,
     #[command(flatten)]
     common: netpng_core::CommonArgs,
     /// Zoom level Space cycles to as its first step (2.0 = 200%).
@@ -123,6 +119,8 @@ struct App {
     left_down: bool,
     zoom_cycle: u8,
     deadline: Option<Instant>,
+    /// --quiet: suppress informational messages (errors still print).
+    quiet: bool,
 }
 
 impl ApplicationHandler for App {
@@ -157,10 +155,16 @@ impl ApplicationHandler for App {
             .with_resizable(true);
         // WSLg's Wayland compositor closes the connection when
         // smithay-client-toolkit's client-side decorations (sctk-adwaita) try
-        // to set up their border subsurfaces -- disable decorations on Linux
-        // to avoid that code path. Windows/macOS keep native decorations.
+        // to set up their border subsurfaces -- disable decorations under
+        // WSL to avoid that code path. Everywhere else (native Linux X11 and
+        // Wayland desktops, Windows, macOS) keeps its title bar and borders,
+        // which are the only way to move, close or edge-resize the window.
         #[cfg(target_os = "linux")]
-        let attrs = attrs.with_decorations(false);
+        let attrs = if running_under_wsl() {
+            attrs.with_decorations(false)
+        } else {
+            attrs
+        };
         let window = match event_loop.create_window(attrs) {
             Ok(window) => window,
             Err(e) => {
@@ -247,16 +251,12 @@ impl ApplicationHandler for App {
                             &self.image,
                             CompressionLevel::Default,
                         ) {
-                            Ok(()) => eprintln!("pngview: saved to {}", path.display()),
+                            Ok(()) => self.info(&format!("saved to {}", path.display())),
                             Err(e) => eprintln!("pngview: failed to save: {e}"),
                         }
                     }
-                    Action::Copy => match write_image(
-                        "clipboard",
-                        &self.image,
-                        CompressionLevel::Default,
-                    ) {
-                        Ok(()) => eprintln!("pngview: copied to clipboard"),
+                    Action::Copy => match copy_to_clipboard(&self.image) {
+                        Ok(()) => self.info("copied to clipboard"),
                         Err(e) => eprintln!("pngview: failed to copy to clipboard: {e}"),
                     },
                     Action::CycleZoom => {
@@ -367,6 +367,13 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    /// Prints an informational (non-error) message unless --quiet.
+    fn info(&self, message: &str) {
+        if !self.quiet {
+            eprintln!("pngview: {message}");
+        }
+    }
+
     /// Current window client size in physical pixels (never zero).
     fn win_size(&self) -> (usize, usize) {
         self.surface
@@ -443,12 +450,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let argv = netpng_core::normalize_args(args);
-    if netpng_core::print_version_if_requested(&argv, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
-        return Ok(());
-    }
-    let args = Args::parse_from(argv);
-    let input = args.input_flag.as_deref().unwrap_or(&args.input);
+    let args = Args::parse_from(args);
+    let input = args.input.path();
     let img = read_image(input)?;
     let checkerboarded = composite_checkerboard(&img);
 
@@ -465,8 +468,12 @@ where
     let initial_win_h = ((img.height as f64) * initial_zoom).round() as u32;
 
     if args.copy_to_clipboard {
-        match write_image("clipboard", &img, CompressionLevel::Default) {
-            Ok(()) => eprintln!("pngview: copied to clipboard"),
+        match copy_to_clipboard(&img) {
+            Ok(()) => {
+                if !args.common.quiet {
+                    eprintln!("pngview: copied to clipboard");
+                }
+            }
             Err(e) => eprintln!("pngview: failed to copy to clipboard: {e}"),
         }
     }
@@ -490,11 +497,19 @@ where
         left_down: false,
         zoom_cycle: 0,
         deadline,
+        quiet: args.common.quiet,
     };
     event_loop
         .run_app(&mut app)
         .map_err(|e| anyhow::anyhow!("event loop error: {e}"))?;
     Ok(())
+}
+
+/// True inside WSL (where pngview's window is shown by WSLg); WSL sets
+/// these variables in every process it starts.
+#[cfg(target_os = "linux")]
+fn running_under_wsl() -> bool {
+    std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()
 }
 
 /// The largest zoom that fits the whole image within `win_w` x `win_h`.

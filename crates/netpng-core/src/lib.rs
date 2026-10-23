@@ -613,30 +613,54 @@ pub fn parse_color(s: &str) -> anyhow::Result<[u8; 4]> {
 /// Creates a new image of the given size, every pixel set to `color`
 /// (like pnmmake). Shared with [`pad`]'s border fill and `pngflatten`'s
 /// solid background.
-pub fn solid(width: u32, height: u32, color: [u8; 4]) -> Image {
-    let mut pixels = Vec::with_capacity((width as usize) * (height as usize) * 4);
-    for _ in 0..(width as usize * height as usize) {
-        pixels.extend_from_slice(&color);
-    }
-    Image { width, height, pixels }
+pub fn solid(width: u32, height: u32, color: [u8; 4]) -> anyhow::Result<Image> {
+    let pixels = color.repeat(pixel_count(width, height)?);
+    Ok(Image { width, height, pixels })
+}
+
+/// `width * height`, or an error if that many RGBA pixels can't be
+/// addressed in memory.
+fn pixel_count(width: u32, height: u32) -> anyhow::Result<usize> {
+    (width as usize)
+        .checked_mul(height as usize)
+        .filter(|n| n.checked_mul(4).is_some())
+        .ok_or_else(|| anyhow::anyhow!("{width}x{height} is too large an image"))
 }
 
 /// Adds a border of `color` around `img` (like pnmpad). The original
 /// pixels are copied in as-is, not alpha-composited, so `img`'s own
 /// transparency is preserved exactly rather than being blended onto the
 /// border color.
-pub fn pad(img: &Image, top: u32, bottom: u32, left: u32, right: u32, color: [u8; 4]) -> Image {
-    let out_w = img.width + left + right;
-    let out_h = img.height + top + bottom;
-    let mut out = solid(out_w, out_h, color);
-    for row in 0..img.height {
-        let src_start = (row * img.width * 4) as usize;
-        let src_end = src_start + (img.width as usize) * 4;
-        let dst_start = (((row + top) * out_w + left) * 4) as usize;
-        let dst_end = dst_start + (img.width as usize) * 4;
-        out.pixels[dst_start..dst_end].copy_from_slice(&img.pixels[src_start..src_end]);
+pub fn pad(
+    img: &Image,
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+    color: [u8; 4],
+) -> anyhow::Result<Image> {
+    let too_large = || anyhow::anyhow!("padded image would be wider or taller than {} pixels", u32::MAX);
+    let out_w = img
+        .width
+        .checked_add(left)
+        .and_then(|w| w.checked_add(right))
+        .ok_or_else(too_large)?;
+    let out_h = img
+        .height
+        .checked_add(top)
+        .and_then(|h| h.checked_add(bottom))
+        .ok_or_else(too_large)?;
+    let mut out = solid(out_w, out_h, color)?;
+    // solid() has checked that out_w * out_h * 4 fits in usize, so the
+    // offsets below (all within the output buffer) can't overflow.
+    let row_bytes = img.width as usize * 4;
+    for row in 0..img.height as usize {
+        let src_start = row * row_bytes;
+        let dst_start = ((row + top as usize) * out_w as usize + left as usize) * 4;
+        out.pixels[dst_start..dst_start + row_bytes]
+            .copy_from_slice(&img.pixels[src_start..src_start + row_bytes]);
     }
-    out
+    Ok(out)
 }
 
 /// Extracts `img`'s alpha channel as a fully-opaque grayscale image
@@ -687,13 +711,19 @@ pub fn apply_alpha(img: &Image, mask: &Image) -> anyhow::Result<Image> {
 /// channel becomes `(v/255)^(1/gamma) * 255` (like pnmgamma). `gamma` > 1
 /// brightens midtones; `gamma` < 1 darkens them.
 pub fn gamma(img: &Image, g: f64) -> anyhow::Result<Image> {
-    ensure!(g > 0.0, "--gamma must be greater than 0, got {g}");
+    ensure!(
+        g.is_finite() && g > 0.0,
+        "--gamma must be a finite number greater than 0, got {g}"
+    );
     let exponent = 1.0 / g;
+    let mut table = [0u8; 256];
+    for (v, out) in table.iter_mut().enumerate() {
+        *out = ((v as f64 / 255.0).powf(exponent) * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
     let mut pixels = img.pixels.clone();
     for px in pixels.chunks_exact_mut(4) {
         for c in 0..3 {
-            let v = (px[c] as f64 / 255.0).powf(exponent) * 255.0;
-            px[c] = v.round().clamp(0.0, 255.0) as u8;
+            px[c] = table[px[c] as usize];
         }
     }
     Ok(Image {
@@ -722,68 +752,42 @@ impl From<CompressionLevel> for png::Compression {
 
 /// `-v`/`--version` and `-q`/`--quiet`, shared by every netpng tool's
 /// `Args` via `#[command(flatten)]` instead of each one redeclaring the
-/// same two fields. `version` is read by `print_version_if_requested`,
-/// not from the parsed struct (see that function for why); it's kept
-/// here mainly so `--help` documents it and clap accepts it as a known
-/// flag.
+/// same two fields. `--version` uses clap's own version action, so like
+/// `--help` it prints and exits before any other argument is validated
+/// (and works inside combined short flags such as `-qv`); the tool's
+/// `Args` must carry `#[command(version)]` to supply the version string.
 #[derive(clap::Args)]
+#[command(disable_version_flag = true)]
 pub struct CommonArgs {
     /// Print the version and exit.
-    #[arg(short = 'v', long)]
-    pub version: bool,
+    #[arg(short = 'v', long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
     /// Suppress informational messages (errors are still printed).
     #[arg(short = 'q', long)]
     pub quiet: bool,
 }
 
-/// Checks already-normalized argv for `-v`/`--version` and, if present,
-/// prints `"<name> <version>"` and returns `true` -- callers should
-/// return `Ok(())` immediately in that case, *before* calling
-/// `Args::parse_from`.
-///
-/// This has to happen before clap parses the rest of the arguments:
-/// unlike clap's own built-in `--help`, our hand-declared `version: bool`
-/// field is an ordinary flag, so clap would otherwise insist on every
-/// *other* required argument being present too before it ever reports
-/// that `--version` was passed. Scanning the raw tokens first gives
-/// `--version` the same "ignore everything else" short-circuit that
-/// `--help` gets for free.
-///
-/// Tokens after a literal `--` are left alone (treated as positional
-/// values, e.g. a file actually named `--version`), matching clap's own
-/// `--` convention.
-pub fn print_version_if_requested(argv: &[std::ffi::OsString], name: &str, version: &str) -> bool {
-    let wants = argv
-        .iter()
-        .take_while(|a| *a != "--")
-        .any(|a| a == "-v" || a == "--version");
-    if wants {
-        println!("{name} {version}");
-    }
-    wants
+/// The input image, given either as a positional `INPUT` or as `--input`
+/// (but not both), shared by every single-input tool's `Args` via
+/// `#[command(flatten)]`. Read it with [`InputArgs::path`].
+#[derive(clap::Args)]
+pub struct InputArgs {
+    /// Input path, "-" or omitted for stdin, or "clipboard".
+    #[arg(value_name = "INPUT", conflicts_with = "input_flag")]
+    input: Option<String>,
+    /// Same as INPUT, as a flag (give one or the other, not both).
+    #[arg(short = 'i', long = "input", value_name = "INPUT")]
+    input_flag: Option<String>,
 }
 
-/// Rewrites netpbm-style single-dash common options to their two-dash
-/// long form before clap sees them: `-version` -> `--version`,
-/// `-quiet` -> `--quiet`. clap's derive API only accepts the two-dash
-/// form for long options, so every tool funnels its raw argument
-/// iterator through this before parsing; all other tokens pass through
-/// unchanged.
-pub fn normalize_args<I, T>(args: I) -> Vec<std::ffi::OsString>
-where
-    I: IntoIterator<Item = T>,
-    T: Into<std::ffi::OsString>,
-{
-    args.into_iter()
-        .map(|arg| {
-            let os: std::ffi::OsString = arg.into();
-            match os.to_str() {
-                Some("-version") => std::ffi::OsString::from("--version"),
-                Some("-quiet") => std::ffi::OsString::from("--quiet"),
-                _ => os,
-            }
-        })
-        .collect()
+impl InputArgs {
+    /// The input path; `"-"` (stdin) when none was given.
+    pub fn path(&self) -> &str {
+        self.input_flag
+            .as_deref()
+            .or(self.input.as_deref())
+            .unwrap_or("-")
+    }
 }
 
 /// Opens `path` for reading, treating the literal `"-"` as stdin.
@@ -819,6 +823,13 @@ pub fn read_image(path: &str) -> anyhow::Result<Image> {
 
 /// Writes `img` to `path` under the same `"clipboard"` / `"-"` / file
 /// convention as [`read_image`].
+///
+/// On Linux, `"clipboard"` blocks: X11/Wayland clipboards are served by
+/// the process that set them, so a one-shot tool keeps serving the image
+/// in the foreground until another program takes over the clipboard
+/// (like `wl-copy --foreground`) instead of exiting and silently taking
+/// the image with it. Long-lived callers that must not block (pngview)
+/// use [`copy_to_clipboard`] instead.
 pub fn write_image(path: &str, img: &Image, level: CompressionLevel) -> anyhow::Result<()> {
     if path == "clipboard" {
         write_clipboard_image(img)
@@ -876,6 +887,15 @@ fn read_clipboard_image() -> anyhow::Result<Image> {
     })
 }
 
+/// Puts `img` on the system clipboard without blocking, for a caller that
+/// stays running (pngview): on Linux the image is served from a detached
+/// thread for as long as this process lives, rather than in the
+/// foreground as [`write_image`]'s `"clipboard"` does.
+#[cfg(not(target_os = "linux"))]
+pub fn copy_to_clipboard(img: &Image) -> anyhow::Result<()> {
+    write_clipboard_image(img)
+}
+
 #[cfg(not(target_os = "linux"))]
 fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
     let mut clipboard = arboard::Clipboard::new()?;
@@ -897,26 +917,50 @@ fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
 /// GUI event loop). That thread, and so the clipboard content, naturally
 /// goes away when this process exits.
 #[cfg(target_os = "linux")]
-fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
-    use arboard::SetExtLinux;
-
-    let width = img.width as usize;
-    let height = img.height as usize;
-    let bytes = img.pixels.clone();
+pub fn copy_to_clipboard(img: &Image) -> anyhow::Result<()> {
+    let img = Image {
+        width: img.width,
+        height: img.height,
+        pixels: img.pixels.clone(),
+    };
     std::thread::spawn(move || {
-        let result = (|| -> anyhow::Result<()> {
-            let mut clipboard = arboard::Clipboard::new()?;
-            clipboard.set().wait().image(arboard::ImageData {
-                width,
-                height,
-                bytes: std::borrow::Cow::Owned(bytes),
-            })?;
-            Ok(())
-        })();
-        if let Err(e) = result {
+        if let Err(e) = serve_clipboard_image(img) {
             eprintln!("netpng: clipboard-serving thread failed: {e}");
         }
     });
+    Ok(())
+}
+
+/// One-shot tools on Linux: serve the image from this thread until
+/// another program takes the clipboard (see [`write_image`]).
+#[cfg(target_os = "linux")]
+fn write_clipboard_image(img: &Image) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    if io::stderr().is_terminal() {
+        eprintln!(
+            "netpng: serving the image on the clipboard until something else is copied \
+             (Ctrl-C to stop)"
+        );
+    }
+    serve_clipboard_image(Image {
+        width: img.width,
+        height: img.height,
+        pixels: img.pixels.clone(),
+    })
+}
+
+/// Sets the clipboard to `img` and keeps answering paste requests until
+/// another program takes the clipboard over.
+#[cfg(target_os = "linux")]
+fn serve_clipboard_image(img: Image) -> anyhow::Result<()> {
+    use arboard::SetExtLinux;
+
+    let mut clipboard = arboard::Clipboard::new()?;
+    clipboard.set().wait().image(arboard::ImageData {
+        width: img.width as usize,
+        height: img.height as usize,
+        bytes: std::borrow::Cow::Owned(img.pixels),
+    })?;
     Ok(())
 }
 
@@ -1024,13 +1068,19 @@ pub fn read_jpeg(path: &str) -> anyhow::Result<Image> {
 fn flatten_alpha(img: &Image, background: [u8; 3]) -> Vec<u8> {
     let mut out = vec![0u8; (img.width as usize) * (img.height as usize) * 3];
     for (o, px) in out.chunks_exact_mut(3).zip(img.pixels.chunks_exact(4)) {
-        let a = px[3] as f32 / 255.0;
-        for c in 0..3 {
-            let blended = px[c] as f32 * a + background[c] as f32 * (1.0 - a);
-            o[c] = blended.round().clamp(0.0, 255.0) as u8;
-        }
+        blend_onto(px, background, o);
     }
     out
+}
+
+/// Writes straight-alpha `px` composited over the opaque `background`
+/// into `out`'s first three (RGB) bytes.
+fn blend_onto(px: &[u8], background: [u8; 3], out: &mut [u8]) {
+    let a = px[3] as f32 / 255.0;
+    for c in 0..3 {
+        let blended = px[c] as f32 * a + background[c] as f32 * (1.0 - a);
+        out[c] = blended.round().clamp(0.0, 255.0) as u8;
+    }
 }
 
 /// Composites `img`'s alpha onto an opaque `background`, returning a
@@ -1038,11 +1088,11 @@ fn flatten_alpha(img: &Image, background: [u8; 3]) -> Vec<u8> {
 /// JPEG encoder below, which needs the same blend for a different reason
 /// (JPEG has no alpha channel at all).
 pub fn flatten(img: &Image, background: [u8; 3]) -> Image {
-    let rgb = flatten_alpha(img, background);
-    let mut pixels = vec![0u8; rgb.len() / 3 * 4];
-    for (dst, src) in pixels.chunks_exact_mut(4).zip(rgb.chunks_exact(3)) {
-        dst[..3].copy_from_slice(src);
-        dst[3] = 255;
+    let mut pixels = img.pixels.clone();
+    for px in pixels.chunks_exact_mut(4) {
+        let src = [px[0], px[1], px[2], px[3]];
+        blend_onto(&src, background, px);
+        px[3] = 255;
     }
     Image {
         width: img.width,
@@ -1741,9 +1791,56 @@ mod tests {
         assert!(ico_directory(&[0, 0, 1, 0, 2, 0, 1, 1, 0, 0, 0, 0]).is_err());
     }
 
+    #[derive(clap::Parser)]
+    #[command(name = "pngtest", version = "1.2.3")]
+    struct TestArgs {
+        #[command(flatten)]
+        input: InputArgs,
+        #[command(flatten)]
+        common: CommonArgs,
+        #[arg(long)]
+        width: u32,
+    }
+
+    fn try_parse(argv: &[&str]) -> Result<TestArgs, clap::Error> {
+        use clap::Parser;
+        TestArgs::try_parse_from(std::iter::once("pngtest").chain(argv.iter().copied()))
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        TestArgs::command().debug_assert();
+    }
+
+    #[test]
+    fn version_short_circuits_even_in_combined_flags() {
+        for argv in [&["-v"][..], &["--version"], &["-qv"], &["-vq"]] {
+            let err = try_parse(argv).err().expect("version should exit");
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn input_comes_from_positional_or_flag_but_not_both() {
+        assert_eq!(try_parse(&["--width", "1"]).unwrap().input.path(), "-");
+        assert_eq!(try_parse(&["--width", "1", "a.png"]).unwrap().input.path(), "a.png");
+        assert_eq!(try_parse(&["--width", "1", "--input", "a.png"]).unwrap().input.path(), "a.png");
+        assert_eq!(try_parse(&["--width", "1", "-qi", "a.png"]).unwrap().input.path(), "a.png");
+        let err = try_parse(&["--width", "1", "--input", "a.png", "b.png"]).err().unwrap();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn values_after_double_dash_are_positional() {
+        let args = try_parse(&["-q", "--width", "1", "--", "--version"]).unwrap();
+        assert!(args.common.quiet);
+        assert_eq!(args.input.path(), "--version");
+    }
+
     #[test]
     fn solid_fills_every_pixel() {
-        let img = solid(2, 2, [10, 20, 30, 40]);
+        let img = solid(2, 2, [10, 20, 30, 40]).unwrap();
         assert_eq!(img.width, 2);
         assert_eq!(img.height, 2);
         for px in img.pixels.chunks_exact(4) {
@@ -1758,11 +1855,19 @@ mod tests {
             height: 1,
             pixels: vec![1, 2, 3, 128], // semi-transparent, must not be blended
         };
-        let out = pad(&img, 1, 1, 1, 1, [9, 9, 9, 255]);
+        let out = pad(&img, 1, 1, 1, 1, [9, 9, 9, 255]).unwrap();
         assert_eq!((out.width, out.height), (3, 3));
         assert_eq!(pixel_at(&out, 1, 1), [1, 2, 3, 128]);
         assert_eq!(pixel_at(&out, 0, 0), [9, 9, 9, 255]);
         assert_eq!(pixel_at(&out, 2, 2), [9, 9, 9, 255]);
+    }
+
+    #[test]
+    fn pad_rejects_sizes_that_overflow_instead_of_wrapping() {
+        let img = solid(4, 3, [0, 0, 0, 255]).unwrap();
+        assert!(pad(&img, 0, 0, 1 << 31, 1 << 31, [0; 4]).is_err());
+        assert!(pad(&img, 0, 0, u32::MAX, 0, [0; 4]).is_err());
+        assert!(pad(&img, u32::MAX, 0, 0, 0, [0; 4]).is_err());
     }
 
     #[test]
@@ -1832,6 +1937,8 @@ mod tests {
         };
         assert!(gamma(&img, 0.0).is_err());
         assert!(gamma(&img, -1.0).is_err());
+        assert!(gamma(&img, f64::INFINITY).is_err());
+        assert!(gamma(&img, f64::NAN).is_err());
     }
 
     #[test]
