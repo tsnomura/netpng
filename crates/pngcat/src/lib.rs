@@ -1,0 +1,114 @@
+use clap::{Parser, ValueEnum};
+use netpng_core::{read_image, write_image, CompressionLevel, Image};
+
+#[derive(Copy, Clone, ValueEnum)]
+enum Direction {
+    Horizontal,
+    Vertical,
+}
+
+/// Concatenate PNG images side by side (horizontal) or stacked (vertical).
+/// A single input is passed through unchanged, like `cat`.
+#[derive(Parser)]
+struct Args {
+    /// Input images (at least 1), in order; "-" for stdin (at most once), or "clipboard".
+    #[arg(value_name = "INPUTS")]
+    inputs: Vec<String>,
+    /// Additional input images, appended after the positional INPUTS.
+    #[arg(long = "input", value_name = "INPUT")]
+    input: Vec<String>,
+    /// Output path, "-" for stdout, or "clipboard".
+    #[arg(long, default_value = "-")]
+    output: String,
+    #[command(flatten)]
+    common: netpng_core::CommonArgs,
+    #[arg(long, value_enum, default_value = "horizontal")]
+    direction: Direction,
+    #[arg(long, value_enum, default_value = "fast")]
+    compression: CompressionLevel,
+}
+
+pub fn run<I, T>(args: I) -> anyhow::Result<()>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let argv = netpng_core::normalize_args(args);
+    if netpng_core::print_version_if_requested(&argv, env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")) {
+        return Ok(());
+    }
+    let args = Args::parse_from(argv);
+    let _ = args.common.quiet;
+
+    let mut inputs = args.inputs;
+    inputs.extend(args.input);
+    anyhow::ensure!(!inputs.is_empty(), "at least one input image is required");
+    let stdin_count = inputs.iter().filter(|p| p.as_str() == "-").count();
+    anyhow::ensure!(stdin_count <= 1, "at most one input may be \"-\" (stdin)");
+
+    let images: Vec<Image> = inputs
+        .iter()
+        .map(|p| read_image(p))
+        .collect::<anyhow::Result<_>>()?;
+
+    let out = match args.direction {
+        Direction::Horizontal => cat_horizontal(&images)?,
+        Direction::Vertical => cat_vertical(&images)?,
+    };
+
+    write_image(&args.output, &out, args.compression)
+}
+
+fn cat_horizontal(images: &[Image]) -> anyhow::Result<Image> {
+    let height = images[0].height;
+    for img in images {
+        anyhow::ensure!(
+            img.height == height,
+            "all images must have the same height for horizontal cat (expected {height}, got {})",
+            img.height
+        );
+    }
+
+    let total_width: u32 = images.iter().map(|i| i.width).sum();
+    let mut pixels = vec![0u8; (total_width as usize) * (height as usize) * 4];
+    let mut x_offset = 0u32;
+    for img in images {
+        for row in 0..height {
+            let src_start = (row * img.width * 4) as usize;
+            let src_end = src_start + (img.width * 4) as usize;
+            let dst_start = ((row * total_width + x_offset) * 4) as usize;
+            let dst_end = dst_start + (img.width * 4) as usize;
+            pixels[dst_start..dst_end].copy_from_slice(&img.pixels[src_start..src_end]);
+        }
+        x_offset += img.width;
+    }
+
+    Ok(Image {
+        width: total_width,
+        height,
+        pixels,
+    })
+}
+
+fn cat_vertical(images: &[Image]) -> anyhow::Result<Image> {
+    let width = images[0].width;
+    for img in images {
+        anyhow::ensure!(
+            img.width == width,
+            "all images must have the same width for vertical cat (expected {width}, got {})",
+            img.width
+        );
+    }
+
+    let total_height: u32 = images.iter().map(|i| i.height).sum();
+    let mut pixels = Vec::with_capacity((width as usize) * (total_height as usize) * 4);
+    for img in images {
+        pixels.extend_from_slice(&img.pixels);
+    }
+
+    Ok(Image {
+        width,
+        height: total_height,
+        pixels,
+    })
+}

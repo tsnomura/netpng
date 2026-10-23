@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/netpng-core",
+    "crates/pngcrop",
+    "crates/pngcat",
+    "crates/pngtrim",
+    "crates/pngcompose",
+    "crates/pnginfo",
+    "crates/pnginvert",
+    "crates/pngflip",
+    "crates/pngrotate",
+    "crates/pngscale",
+    "crates/pngnorm",
+    "crates/pngdist",
+    "crates/pngreduce",
+    "crates/pngchroma",
+    "crates/pngblur",
+    "crates/pngview",
+    "crates/pngdecontaminate",
+    "crates/jpg2png",
+    "crates/png2jpg",
+    "crates/ico2png",
+    "crates/png2ico",
+    "crates/clip2png",
+    "crates/pngmake",
+    "crates/pngpad",
+    "crates/pngalpha",
+    "crates/pngflatten",
+    "crates/pnggamma",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+strip = true

@@ -1,0 +1,9 @@
+[package]
+name = "pnginvert"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+netpng-core = { path = "../netpng-core" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
