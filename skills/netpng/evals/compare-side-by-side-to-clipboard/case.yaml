@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: compare-side-by-side-to-clipboard
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  compare.png has before.png on the left and after.png on the right at the
+  same height, and the same image is on the clipboard afterwards. The
+  clipboard write was detached (setsid -f) so no command hung.

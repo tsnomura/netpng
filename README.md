@@ -113,6 +113,19 @@ copying the binaries directly into a PATH directory reliably triggered
 during development. The shims only work from a bash-like shell; from
 PowerShell/cmd, call the `.exe` in `~/.netpng/bin` directly.
 
+## Claude Code skill
+
+`skills/netpng/` is an optional [Claude Code](https://claude.com/claude-code)
+skill that teaches Claude to use these tools (conventions, pipelines,
+chroma-key tuning, clipboard handling on Linux) instead of writing
+ImageMagick or Pillow code. Install it for all your projects with:
+
+```
+cp -r skills/netpng ~/.claude/skills/
+```
+
+`skills/netpng/evals/` holds its test cases.
+
 ## Layout
 
 - `crates/netpng-core` — shared library: PNG decode/encode, JPEG/ICO bridge
@@ -120,3 +133,5 @@ PowerShell/cmd, call the `.exe` in `~/.netpng/bin` directly.
   (`crop`, `rotate`, `chroma_key`, `quantize`, ...)
 - `crates/<tool>` — one thin CLI binary crate per tool, each just parsing
   flags and calling into `netpng-core`
+- `skills/netpng` — optional Claude Code skill for using the tools (see
+  "Claude Code skill" above)
