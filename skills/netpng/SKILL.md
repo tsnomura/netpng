@@ -1,6 +1,6 @@
 ---
 name: netpng
-description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick commands or Python/Pillow scripts.
+description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick or ffmpeg commands or Python/Pillow scripts.
 ---
 
 # netpng
@@ -9,7 +9,7 @@ netpng is a set of small PNG command-line tools in the spirit of netpbm: each
 tool does one job, and jobs are chained with pipes
 (<https://github.com/tsnomura/netpng>). Its `install.sh` puts shims in
 `~/bin` and the real binaries in `~/.netpng/bin`. Using it instead of ad-hoc
-ImageMagick/Pillow code keeps the user's image workflow in one consistent
+ImageMagick/ffmpeg/Pillow code keeps the user's image workflow in one consistent
 set of tools.
 
 If a tool is missing (`command -v pngtrim` fails), build and install it
@@ -184,5 +184,28 @@ netpng has no text or shape drawing, no general grayscale/desaturate for
 photos (`pngdist` is only for few-color images), no sharpening or
 brightness/contrast arithmetic beyond `pnggamma`/`pngnorm`, no formats other
 than PNG/JPEG/ICO (no WebP, GIF, TIFF, SVG), and no metadata editing. For
-those steps, say netpng doesn't cover it and use ImageMagick or Pillow for
-just that step, keeping netpng for the rest of the pipeline.
+those steps, say netpng doesn't cover it and use ImageMagick, ffmpeg or
+Pillow for just that step, keeping netpng for the rest of the pipeline.
+ffmpeg is tempting for still images too (`-vf scale`, `crop`, `pad`,
+`hflip`, format conversion), but use netpng for anything it covers.
+
+### Record the gap in `~/.netpng_wishlist`
+
+Whenever you fall back to something other than netpng for an image step
+netpng couldn't do, append one line to `~/.netpng_wishlist` so the gap can
+become a new tool or option later:
+
+```bash
+printf '%s\t%s\t%s\n' "$(date +%F)" \
+  "what was needed, as a generic operation (e.g. desaturate a photo to grayscale)" \
+  "what was used instead (e.g. Pillow ImageOps.grayscale)" >> ~/.netpng_wishlist
+```
+
+- Log it only for a real gap: check `<tool> --help` first, and don't log
+  when the user asked for ImageMagick/ffmpeg/Pillow themselves.
+- Video work (extracting frames, making a GIF/MP4 from images) is outside
+  netpng's scope and isn't a gap; do log ffmpeg used on still images.
+- Describe the operation, not the user's data: no file names, paths or
+  image contents.
+- Append only; never rewrite or delete existing lines.
+- Tell the user in one line that you added a wishlist entry.
