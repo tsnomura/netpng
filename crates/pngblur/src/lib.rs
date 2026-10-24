@@ -2,7 +2,9 @@ use clap::Parser;
 use netpng_core::{blur, read_image, write_image, BlurChannels, CompressionLevel};
 
 /// Apply a Gaussian blur. Use --channels alpha to feather a mask (e.g.
-/// from pngchroma) without blurring its colors.
+/// from pngchroma) without blurring its colors. The blur is alpha-weighted,
+/// so the color hidden in fully transparent pixels (such as a keyed-out
+/// green) never shows up in the result.
 #[derive(Parser)]
 #[command(version)]
 struct Args {
