@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: trim-and-pad-screenshot
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  screenshot-clean.png contains the blue bar and the text of screenshot.png
+  with exactly 20 px of white margin on every side (about 321x108), made
+  with pngtrim and pngpad, and screenshot.png is left unchanged.

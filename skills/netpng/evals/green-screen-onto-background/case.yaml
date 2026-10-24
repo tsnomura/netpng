@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: green-screen-onto-background
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  result.png is 400x300 (the size of bg.jpg) and shows the red disc with
+  its yellow bar centered on the blue gradient, with no green fringe left
+  around the disc. Made with jpg2png, pngchroma, pngdecontaminate and
+  pngcompose, with centering offsets computed from the image sizes.
