@@ -118,7 +118,7 @@ PowerShell/cmd, call the `.exe` in `~/.netpng/bin` directly.
 `skills/netpng/` is an optional [Claude Code](https://claude.com/claude-code)
 skill that teaches Claude to use these tools (conventions, pipelines,
 chroma-key tuning, clipboard handling on Linux) instead of writing
-ImageMagick or Pillow code. Install it for all your projects with:
+ImageMagick, ffmpeg or Pillow code. Install it for all your projects with:
 
 ```
 cp -r skills/netpng ~/.claude/skills/
