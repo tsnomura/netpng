@@ -1,6 +1,6 @@
 ---
 name: netpng
-description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, render a DXF (CAD) drawing to PNG, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick or ffmpeg commands or Python/Pillow scripts.
+description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, render a DXF (CAD) drawing or a Mermaid diagram to PNG, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick or ffmpeg commands or Python/Pillow scripts.
 ---
 
 # netpng
@@ -178,6 +178,34 @@ pngchroma in.png --background 0,255,0 --similarity 255 --blend 1 \
   | pngdecontaminate --background 0,255,0 -o core.png
 pngcompose wide.png core.png -o cutout.png      # core over wide
 ```
+
+## Mermaid diagrams to PNG
+
+netpng has no Mermaid renderer of its own; use `merman-cli` (a headless
+Rust Mermaid implementation, no browser or Node.js) and hand its PNG to
+netpng. Install it with `cargo install merman-cli --locked` if
+`command -v merman-cli` fails.
+
+```bash
+# Render, then trim and add an even white margin
+merman-cli render diagram.mmd --format png -s 2 -b white -o - \
+  | pngtrim | pngpad --top 16 --bottom 16 --left 16 --right 16 --color 255,255,255 -o diagram.png
+
+# Source from stdin (e.g. a heredoc)
+printf 'flowchart LR\n  A --> B\n' | merman-cli render - --format png -b white -o diagram.png
+```
+
+- Always pass `-o FILE` or `-o -` (stdout). Without `-o`, it writes next
+  to the input with the extension replaced (`diagram.mmd` -> `diagram.png`),
+  silently overwriting any existing file.
+- The background is transparent unless `-b white` (or another color) is
+  given; `-s 2` renders at twice the size for sharper text.
+- Labels use the system fonts (Japanese works when a CJK font is
+  installed); `--font-dir`/`--font-file` pick specific ones.
+- A syntax error prints `Diagram parse error ...` and exits 1; fix the
+  source rather than retrying. `merman-cli render --help` lists the rest
+  (`--format svg|jpg|pdf|ascii`, themes, layouts).
+- Rendering Mermaid is not a netpng gap; don't add it to the wishlist.
 
 ## When netpng is not enough
 
