@@ -67,6 +67,7 @@ pngchroma photo.png --background 0,255,0 --blend 200 \
 | `ico2png` | — | Extract one size from an ICO as PNG (default largest; `--size` picks the closest) |
 | `png2ico` | — | Pack an image into an ICO, one entry per size (default `16,32,48,256`) |
 | `clip2png` | — | Copy the image on the clipboard to stdout or a file as an 8-bit RGBA PNG (no input image) |
+| `dxf2png` | — | Render a DXF drawing's model space (lines, arcs, circles, ellipses, polylines, splines, blocks; no text) to PNG, longer side 1024 px by default |
 | `pngmake` | pnmmake | Create a new solid-color PNG of a given size (no input image) |
 | `pngpad` | pnmpad | Add a border of a solid color around an image |
 | `pngalpha` | — | Extract the alpha channel as grayscale, or apply a grayscale `--mask` as the new alpha channel |
