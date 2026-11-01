@@ -28,6 +28,7 @@ members = [
     "crates/pngalpha",
     "crates/pngflatten",
     "crates/pnggamma",
+    "crates/dxf2png",
 ]
 
 [workspace.package]

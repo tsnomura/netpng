@@ -1,6 +1,6 @@
 ---
 name: netpng
-description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick or ffmpeg commands or Python/Pillow scripts.
+description: Edit PNG images from the shell with netpng, a netpbm-style toolkit of single-purpose PNG commands (pngtrim, pngcrop, pngscale, pngpad, pngcat, pngcompose, pngchroma, clip2png, png2jpg, ...) installed in ~/bin. Use this skill whenever the user wants to crop, trim whitespace/margins, resize, rotate, flip, pad, tile side by side, overlay/composite, remove a solid or green-screen background, feather, blur, invert, gamma-correct, normalize, reduce colors, flatten transparency, check an image's size, convert PNG to/from JPEG or ICO, render a DXF (CAD) drawing to PNG, or move an image to/from the clipboard -- screenshots and figures included, and even when netpng is not named (画像の切り抜き・余白削除・リサイズ・背景透過・合成・並べる・クリップボードの画像など). Prefer it over writing ImageMagick or ffmpeg commands or Python/Pillow scripts.
 ---
 
 # netpng
@@ -23,7 +23,7 @@ from a clone of the repository:
   input means stdin; `clipboard` reads the clipboard image. Exceptions:
   `pngcompose` takes `BASE OVERLAY` (or `--base`/`--overlay`), `pngcat` takes
   any number of inputs, `pngmake` and `clip2png` take none, and
-  `jpg2png`/`ico2png` read only files or stdin.
+  `jpg2png`/`ico2png`/`dxf2png` read only files or stdin.
 - **Output**: PNG on stdout by default; `-o FILE` writes a file, `-o clipboard`
   sets the clipboard. `png2jpg`/`png2ico` write JPEG/ICO instead.
 - **Colors** are `R,G,B` or `R,G,B,A`, each 0-255 (`255,255,255`, `0,0,0,0`).
@@ -94,6 +94,7 @@ see windows:
 | `clip2png` | Clipboard image to PNG | |
 | `jpg2png` / `png2jpg` | JPEG to/from PNG | png2jpg: `--quality` (90), `--background` for alpha (white) |
 | `ico2png` / `png2ico` | ICO to/from PNG | ico2png: `--size N`; png2ico: `--sizes 16,32,48,256` |
+| `dxf2png` | Render a DXF drawing's model space (lines, arcs, circles, ellipses, polylines, splines, blocks; no text) | `--width`/`--height` (default: longer side 1024), `--xysize W H` (stretch), `--foreground`, `--background`, `--transparent` |
 | `pngview` | Window for the user (see above) | `--timeout S`, `--copy-to-clipboard`, `--zoom` |
 
 ## Recipes
